@@ -1,0 +1,214 @@
+"""
+L1: Working Memory — GoalAnchor, TaskPlanner, Scratchpad, Compaction, SmartHistory, SmartToolOutput.
+"""
+import json, os, re, logging, threading
+from typing import List, Dict, Optional
+from .config import MemoryConfig
+
+logger = logging.getLogger("memory.working")
+
+
+class GoalAnchor:
+    """Якорь цели — напоминает агенту о задаче каждую итерацию."""
+    TAG = "⚓ ЦЕЛЬ:"
+
+    def __init__(self, user_message: str, planner=None):
+        self._task = user_message[:MemoryConfig.ANCHOR_MAX_TASK_CHARS]
+        self._planner = planner
+        self.actions: List[Dict] = []
+
+    def record(self, tool: str, success: bool, summary: str = ""):
+        self.actions.append({"tool": tool, "ok": success, "s": summary[:100]})
+        if len(self.actions) > MemoryConfig.ANCHOR_MAX_ACTIONS:
+            self.actions = self.actions[-MemoryConfig.ANCHOR_MAX_ACTIONS:]
+
+    def build(self, iteration: int, max_iter: int, scratchpad: str = "") -> Dict:
+        lines = [f"{self.TAG} {self._task[:300]}"]
+        lines.append(f"Итерация {iteration}/{max_iter}")
+        if self.actions:
+            lines.append("Последние действия:")
+            for a in self.actions[-4:]:
+                icon = "✅" if a["ok"] else "❌"
+                lines.append(f"  {icon} {a['tool']}: {a['s']}")
+        if scratchpad:
+            lines.append(f"Блокнот: {scratchpad[:200]}")
+        return {"role": "user", "content": "\n".join(lines)}
+
+
+class TaskPlanner:
+    """Планировщик задач — разбивает задачу на шаги."""
+
+    def __init__(self, call_llm):
+        self._call_llm = call_llm
+        self.plan: List[Dict] = []
+        self._current_step = 0
+
+    def create_plan(self, task: str, context: str = "") -> List[Dict]:
+        if len(task) < MemoryConfig.PLANNER_MIN_TASK_LENGTH:
+            return []
+        try:
+            resp = self._call_llm([
+                {"role": "system", "content": "Разбей задачу на шаги. JSON массив: [{\"step\":1,\"action\":\"...\",\"tool\":\"ssh_execute\"}]. Максимум 8 шагов. Без markdown."},
+                {"role": "user", "content": f"Задача: {task[:1000]}\nКонтекст: {context[:500]}"}
+            ])
+            resp = resp.strip()
+            if resp.startswith("```"):
+                resp = resp.split("\n", 1)[1].rsplit("```", 1)[0]
+            self.plan = json.loads(resp)[:MemoryConfig.PLANNER_MAX_STEPS]
+            for s in self.plan:
+                s["done"] = False
+            return self.plan
+        except Exception as e:
+            logger.warning(f"TaskPlanner: {e}")
+            return []
+
+    def auto_detect(self, tool_name: str, args: Dict, success: bool):
+        """Автоматически отмечать шаги как выполненные."""
+        if not self.plan or not success:
+            return
+        for step in self.plan:
+            if step.get("done"):
+                continue
+            step_tool = step.get("tool", "")
+            if step_tool and step_tool == tool_name:
+                step["done"] = True
+                self._current_step = step.get("step", 0)
+                break
+
+    def progress_text(self) -> str:
+        if not self.plan:
+            return ""
+        lines = ["ПЛАН ЗАДАЧИ:"]
+        for s in self.plan:
+            icon = "✅" if s.get("done") else "⬜"
+            lines.append(f"  {icon} Шаг {s.get('step','?')}: {s.get('action','')[:100]}")
+        done = sum(1 for s in self.plan if s.get("done"))
+        lines.append(f"Прогресс: {done}/{len(self.plan)}")
+        return "\n".join(lines)
+
+
+class Scratchpad:
+    """Блокнот агента — персистентный между итерациями."""
+
+    def __init__(self, chat_id: str = None):
+        self._chat_id = chat_id or "default"
+        self._content = ""
+        self._lock = threading.Lock()
+        self._load()
+
+    def _path(self) -> str:
+        os.makedirs(MemoryConfig.SCRATCHPAD_DIR, exist_ok=True)
+        safe = re.sub(r'[^a-zA-Z0-9_-]', '_', self._chat_id)
+        return os.path.join(MemoryConfig.SCRATCHPAD_DIR, f"{safe}.txt")
+
+    def _load(self):
+        try:
+            p = self._path()
+            if os.path.exists(p):
+                with open(p, "r", encoding="utf-8") as f:
+                    self._content = f.read()[:MemoryConfig.SCRATCHPAD_MAX]
+        except:
+            pass
+
+    def update(self, content: str) -> Dict:
+        with self._lock:
+            self._content = content[:MemoryConfig.SCRATCHPAD_MAX]
+            try:
+                with open(self._path(), "w", encoding="utf-8") as f:
+                    f.write(self._content)
+            except:
+                pass
+        return {"success": True, "length": len(self._content)}
+
+    def get(self) -> str:
+        return self._content
+
+    def append(self, text: str):
+        with self._lock:
+            self._content = (self._content + "\n" + text)[-MemoryConfig.SCRATCHPAD_MAX:]
+
+
+class ContextCompactor:
+    """Сжимает историю сообщений когда она становится слишком длинной."""
+
+    def __init__(self, call_llm=None):
+        self._call_llm = call_llm
+
+    def should_compact(self, messages: List[Dict], iteration: int) -> bool:
+        if len(messages) < MemoryConfig.COMPACT_MSG_THRESHOLD:
+            return False
+        if iteration % MemoryConfig.COMPACT_EVERY_N != 0:
+            return False
+        return True
+
+    def compact(self, messages: List[Dict]) -> List[Dict]:
+        if not self._call_llm or len(messages) < 10:
+            return messages
+        try:
+            system = [m for m in messages if m["role"] == "system"]
+            non_system = [m for m in messages if m["role"] != "system"]
+            keep_first = non_system[:MemoryConfig.COMPACT_KEEP_FIRST]
+            keep_last = non_system[-MemoryConfig.COMPACT_KEEP_LAST:]
+            middle = non_system[MemoryConfig.COMPACT_KEEP_FIRST:-MemoryConfig.COMPACT_KEEP_LAST]
+            if not middle:
+                return messages
+            middle_text = "\n".join(
+                f"{m['role'].upper()}: {str(m.get('content',''))[:300]}"
+                for m in middle
+            )
+            summary = self._call_llm([
+                {"role": "system", "content": "Сожми историю диалога в 3-5 предложений. Сохрани ключевые факты, решения, результаты."},
+                {"role": "user", "content": middle_text[:8000]}
+            ])
+            summary_msg = {"role": "assistant", "content": f"[СЖАТАЯ ИСТОРИЯ]\n{summary}"}
+            return system + keep_first + [summary_msg] + keep_last
+        except Exception as e:
+            logger.warning(f"Compaction failed: {e}")
+            return messages
+
+
+class SmartHistory:
+    """Умная история — обрезает старые сообщения."""
+
+    @staticmethod
+    def build(chat_history: List[Dict]) -> List[Dict]:
+        if not chat_history:
+            return []
+        total_chars = sum(len(str(m.get("content", ""))) for m in chat_history)
+        if (len(chat_history) <= MemoryConfig.HISTORY_MAX_TOTAL and
+                total_chars <= MemoryConfig.HISTORY_MAX_CHARS):
+            return chat_history
+        keep_first = chat_history[:MemoryConfig.HISTORY_KEEP_FIRST]
+        keep_last = chat_history[-MemoryConfig.HISTORY_KEEP_LAST:]
+        result = keep_first + keep_last
+        # Обрезать длинные сообщения
+        trimmed = []
+        for m in result:
+            content = str(m.get("content", ""))
+            if len(content) > 3000:
+                content = content[:3000] + f"...[обрезано, {len(content)} симв.]"
+            trimmed.append({**m, "content": content})
+        return trimmed
+
+
+class SmartToolOutput:
+    """Умная обрезка вывода инструментов."""
+
+    @staticmethod
+    def truncate(result: Dict, tool_name: str) -> str:
+        if tool_name == "ssh_execute":
+            stdout = result.get("stdout", "")
+            stderr = result.get("stderr", "")
+            lines = stdout.split("\n")
+            if len(lines) > MemoryConfig.SSH_HEAD_LINES + MemoryConfig.SSH_TAIL_LINES:
+                head = "\n".join(lines[:MemoryConfig.SSH_HEAD_LINES])
+                tail = "\n".join(lines[-MemoryConfig.SSH_TAIL_LINES:])
+                stdout = f"{head}\n...[{len(lines)} строк]...\n{tail}"
+            out = {"stdout": stdout, "success": result.get("success", False)}
+            if stderr:
+                out["stderr"] = stderr[:500]
+            return json.dumps(out, ensure_ascii=False)[:MemoryConfig.TOOL_OUTPUT_MAX_CHARS]
+        result_str = json.dumps(result, ensure_ascii=False)
+        if len(result_str) > MemoryConfig.TOOL_OUTPUT_MAX_CHARS:
+            return result_str[:MemoryConfig.TOOL_OUTPUT_MAX_CHARS] + "...[обрезано]"
+        return result_str

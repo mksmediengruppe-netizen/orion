@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ORION Digital — AI Business Platform</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔮</text></svg>">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <!-- LOGIN SCREEN -->
+  <div id="login-screen" class="login-screen">
+    <div class="login-card">
+      <div class="login-logo">
+        <div class="logo-orb"></div>
+        <h1>ORION Digital</h1>
+        <p>AI Business Platform</p>
+      </div>
+      <form id="login-form" class="login-form">
+        <div class="form-group">
+          <label>Логин</label>
+          <input type="text" id="login-username" placeholder="admin" autocomplete="username" required>
+        </div>
+        <div class="form-group">
+          <label>Пароль</label>
+          <input type="password" id="login-password" placeholder="••••••••" autocomplete="current-password" required>
+        </div>
+        <div id="login-error" class="login-error hidden"></div>
+        <button type="submit" class="btn-primary btn-full" id="login-btn">
+          <span class="btn-text">Войти</span>
+          <span class="btn-loader hidden">⟳</span>
+        </button>
+      </form>
+      <div class="login-footer">ORION Digital v1.0 · Powered by DeepSeek · Gemini · Claude</div>
+    </div>
+  </div>
+
+  <!-- MAIN APP -->
+  <div id="app" class="app hidden">
+
+    <!-- SIDEBAR -->
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-header">
+        <div class="sidebar-logo">
+          <div class="logo-orb-sm"></div>
+          <span>ORION</span>
+        </div>
+        <button class="sidebar-toggle" id="sidebar-toggle" title="Свернуть">‹</button>
+      </div>
+
+      <!-- MODE SELECTOR -->
+      <div class="mode-section">
+        <div class="mode-label">Режим</div>
+        <div class="mode-grid" id="mode-grid">
+          <button class="mode-btn active" data-mode="turbo_standard" title="Быстро и дёшево">
+            <span class="mode-icon">⚡</span>
+            <span class="mode-name">Turbo</span>
+            <span class="mode-sub">Обычный</span>
+          </button>
+          <button class="mode-btn" data-mode="turbo_premium" title="Turbo с умным общением">
+            <span class="mode-icon">⚡</span>
+            <span class="mode-name">Turbo</span>
+            <span class="mode-sub">Премиум</span>
+          </button>
+          <button class="mode-btn" data-mode="pro_standard" title="Профессиональное планирование">
+            <span class="mode-icon">🧠</span>
+            <span class="mode-name">Pro</span>
+            <span class="mode-sub">Обычный</span>
+          </button>
+          <button class="mode-btn" data-mode="pro_premium" title="Максимальное качество">
+            <span class="mode-icon">🧠</span>
+            <span class="mode-name">Pro</span>
+            <span class="mode-sub">Премиум</span>
+          </button>
+        </div>
+        <div class="mode-info" id="mode-info">DeepSeek везде · Gemini для дизайна</div>
+      </div>
+
+      <!-- AGENTS STATUS -->
+      <div class="agents-section">
+        <div class="section-label">Агенты</div>
+        <div class="agents-list" id="agents-list">
+          <div class="agent-item" data-agent="designer">
+            <span class="agent-emoji">🎨</span>
+            <span class="agent-name">Дизайнер</span>
+            <span class="agent-model">Gemini</span>
+            <span class="agent-status idle"></span>
+          </div>
+          <div class="agent-item" data-agent="developer">
+            <span class="agent-emoji">💻</span>
+            <span class="agent-name">Разработчик</span>
+            <span class="agent-model">DeepSeek</span>
+            <span class="agent-status idle"></span>
+          </div>
+          <div class="agent-item" data-agent="devops">
+            <span class="agent-emoji">🔧</span>
+            <span class="agent-name">DevOps</span>
+            <span class="agent-model">DeepSeek</span>
+            <span class="agent-status idle"></span>
+          </div>
+          <div class="agent-item" data-agent="analyst">
+            <span class="agent-emoji">📊</span>
+            <span class="agent-name">Аналитик</span>
+            <span class="agent-model">DeepSeek</span>
+            <span class="agent-status idle"></span>
+          </div>
+          <div class="agent-item" data-agent="tester">
+            <span class="agent-emoji">🧪</span>
+            <span class="agent-name">Тестировщик</span>
+            <span class="agent-model">DeepSeek</span>
+            <span class="agent-status idle"></span>
+          </div>
+          <div class="agent-item" data-agent="integrator">
+            <span class="agent-emoji">🔌</span>
+            <span class="agent-name">Интегратор</span>
+            <span class="agent-model">DeepSeek</span>
+            <span class="agent-status idle"></span>
+          </div>
+        </div>
+      </div>
+
+      <!-- COST PANEL -->
+      <div class="cost-section">
+        <div class="section-label">Стоимость сессии</div>
+        <div class="cost-bar-wrap">
+          <div class="cost-bar" id="cost-bar">
+            <div class="cost-fill" id="cost-fill" style="width:0%"></div>
+          </div>
+          <div class="cost-labels">
+            <span id="cost-current">$0.000</span>
+            <span id="cost-max">/ $2.00</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- CHATS LIST -->
+      <div class="chats-section">
+        <div class="section-header">
+          <div class="section-label">Чаты</div>
+          <button class="btn-icon" id="new-chat-btn" title="Новый чат">+</button>
+        </div>
+        <div class="chats-list" id="chats-list"></div>
+      </div>
+
+      <!-- SIDEBAR FOOTER -->
+      <div class="sidebar-footer">
+        <div class="user-info" id="user-info">
+          <div class="user-avatar" id="user-avatar">A</div>
+          <div class="user-details">
+            <div class="user-name" id="user-name">Admin</div>
+            <div class="user-role" id="user-role">Administrator</div>
+          </div>
+        </div>
+        <button class="btn-icon" id="logout-btn" title="Выйти">⏻</button>
+      </div>
+    </aside>
+
+    <!-- MAIN CONTENT -->
+    <main class="main" id="main">
+
+      <!-- TOP BAR -->
+      <header class="topbar">
+        <div class="topbar-left">
+          <button class="btn-icon mobile-menu-btn" id="mobile-menu-btn">☰</button>
+          <div class="chat-title-wrap">
+            <h2 class="chat-title" id="chat-title">Новый чат</h2>
+            <div class="intent-badge hidden" id="intent-badge"></div>
+          </div>
+        </div>
+        <div class="topbar-right">
+          <div class="model-indicator" id="model-indicator">
+            <span class="model-dot"></span>
+            <span id="model-name-display">DeepSeek V3.2</span>
+          </div>
+          <button class="btn-icon" id="multi-agent-toggle" title="Мульти-агент режим">
+            <span id="multi-agent-icon">👤</span>
+          </button>
+          <button class="btn-icon" id="settings-btn" title="Настройки">⚙</button>
+        </div>
+      </header>
+
+      <!-- MESSAGES AREA -->
+      <div class="messages-area" id="messages-area">
+        <div class="welcome-screen" id="welcome-screen">
+          <div class="welcome-orb"></div>
+          <h2>ORION Digital</h2>
+          <p>AI Business Platform · v1.0</p>
+          <div class="welcome-chips">
+            <button class="chip" data-prompt="Создай лендинг для SaaS продукта с красивым дизайном">🎨 Создай лендинг</button>
+            <button class="chip" data-prompt="Напиши Python скрипт для парсинга данных с сайта">💻 Напиши скрипт</button>
+            <button class="chip" data-prompt="Настрой nginx и SSL для домена example.com на сервере">🔧 Настрой сервер</button>
+            <button class="chip" data-prompt="Проанализируй рынок SaaS инструментов в России 2024">📊 Анализ рынка</button>
+            <button class="chip" data-prompt="Подключи Telegram Bot API к моему приложению">🔌 Telegram Bot</button>
+            <button class="chip" data-prompt="Протестируй мой сайт на доступность и производительность">🧪 Тест сайта</button>
+          </div>
+          <div class="welcome-models">
+            <span class="model-tag deepseek">DeepSeek V3.2</span>
+            <span class="model-tag gemini">Gemini 2.5 Pro</span>
+            <span class="model-tag sonnet">Claude Sonnet 4.5</span>
+          </div>
+        </div>
+        <div id="messages-list"></div>
+      </div>
+
+      <!-- ASK USER MODAL -->
+      <div class="ask-user-modal hidden" id="ask-user-modal">
+        <div class="ask-user-card">
+          <div class="ask-user-icon">🤔</div>
+          <div class="ask-user-question" id="ask-user-question">Уточните задачу</div>
+          <textarea class="ask-user-input" id="ask-user-input" placeholder="Ваш ответ..." rows="3"></textarea>
+          <div class="ask-user-actions">
+            <button class="btn-secondary" id="ask-user-skip">Пропустить</button>
+            <button class="btn-primary" id="ask-user-send">Ответить</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- INPUT AREA -->
+      <div class="input-area">
+        <div class="input-wrap">
+          <div class="input-tools">
+            <button class="tool-btn" id="attach-btn" title="Прикрепить файл">📎</button>
+            <input type="file" id="file-input" class="hidden" multiple>
+          </div>
+          <textarea
+            id="message-input"
+            class="message-input"
+            placeholder="Напишите задачу... (Enter — отправить, Shift+Enter — новая строка)"
+            rows="1"
+          ></textarea>
+          <div class="input-actions">
+            <div class="char-count" id="char-count"></div>
+            <button class="send-btn" id="send-btn" disabled>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="22" y1="2" x2="11" y2="13"></line>
+                <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+              </svg>
+            </button>
+          </div>
+        </div>
+        <div class="input-footer">
+          <span class="input-hint">ORION Digital · <span id="current-mode-label">Turbo Обычный</span></span>
+          <button class="stop-btn hidden" id="stop-btn">⏹ Стоп</button>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <!-- SETTINGS MODAL -->
+  <div class="modal-overlay hidden" id="settings-modal">
+    <div class="modal">
+      <div class="modal-header">
+        <h3>Настройки</h3>
+        <button class="modal-close" id="settings-close">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="settings-section">
+          <h4>SSH Сервер</h4>
+          <div class="form-row">
+            <div class="form-group">
+              <label>Host / IP</label>
+              <input type="text" id="ssh-host" placeholder="1.2.3.4">
+            </div>
+            <div class="form-group">
+              <label>Пользователь</label>
+              <input type="text" id="ssh-user" placeholder="root" value="root">
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Пароль</label>
+            <input type="password" id="ssh-pass" placeholder="••••••••">
+          </div>
+        </div>
+        <div class="settings-section">
+          <h4>Режим работы</h4>
+          <div class="modes-detail" id="modes-detail"></div>
+        </div>
+        <div class="settings-section">
+          <h4>Агенты и модели</h4>
+          <div class="agents-detail" id="agents-detail"></div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary" id="settings-cancel">Отмена</button>
+        <button class="btn-primary" id="settings-save">Сохранить</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>
