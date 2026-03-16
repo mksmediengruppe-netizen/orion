@@ -53,14 +53,6 @@ app = Flask(__name__)
 app.secret_key = secrets.token_hex(32)
 app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100MB max
 
-@app.after_request
-def security_headers(response):
-    response.headers['X-Content-Type-Options'] = 'nosniff'
-    response.headers['X-Frame-Options'] = 'SAMEORIGIN'
-    response.headers['X-XSS-Protection'] = '1; mode=block'
-    response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
-    return response
-
 # ── Configuration ──────────────────────────────────────────────
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1/chat/completions"
@@ -298,41 +290,6 @@ def require_admin(f):
     return decorated
 
 
-
-# ── Login Lock (5 попыток = блокировка 15 мин) ────────────────
-_LOGIN_LOCKS = {}  # {email: {"attempts": N, "locked_until": timestamp}}
-_LOGIN_LOCK_MAX = 5
-_LOGIN_LOCK_DURATION = 15 * 60  # 15 минут
-_login_lock_mutex = threading.Lock()
-
-def _check_login_lock(email: str):
-    """Проверяет блокировку логина. Возвращает (ok, message)."""
-    with _login_lock_mutex:
-        info = _LOGIN_LOCKS.get(email, {})
-        locked_until = info.get("locked_until", 0)
-        if locked_until and time.time() < locked_until:
-            remaining = int(locked_until - time.time())
-            return False, f"Аккаунт заблокирован на {remaining // 60} мин {remaining % 60} сек из-за множества неудачных попыток"
-        return True, ""
-
-def _record_failed_login(email: str):
-    """Записывает неудачную попытку входа."""
-    with _login_lock_mutex:
-        info = _LOGIN_LOCKS.get(email, {"attempts": 0, "locked_until": 0})
-        # Сбрасываем если блокировка истекла
-        if info.get("locked_until", 0) and time.time() >= info["locked_until"]:
-            info = {"attempts": 0, "locked_until": 0}
-        info["attempts"] = info.get("attempts", 0) + 1
-        if info["attempts"] >= _LOGIN_LOCK_MAX:
-            info["locked_until"] = time.time() + _LOGIN_LOCK_DURATION
-            logging.warning(f"[LoginLock] {email} заблокирован на {_LOGIN_LOCK_DURATION // 60} мин после {info['attempts']} попыток")
-        _LOGIN_LOCKS[email] = info
-
-def _reset_login_lock(email: str):
-    """Сбрасывает счётчик неудачных попыток после успешного входа."""
-    with _login_lock_mutex:
-        _LOGIN_LOCKS.pop(email, None)
-
 @app.route("/api/auth/login", methods=["POST"])
 def login():
     """Authenticate user and return session token."""
@@ -342,11 +299,6 @@ def login():
 
     if not email or not password:
         return jsonify({"error": "Email and password required"}), 400
-
-    # Check login lock
-    ok, lock_msg = _check_login_lock(email)
-    if not ok:
-        return jsonify({"error": lock_msg}), 429
 
     db = db_read()
     password_hash = hashlib.sha256(password.encode()).hexdigest()
@@ -360,13 +312,11 @@ def login():
             break
 
     if not user:
-        _record_failed_login(email)
         return jsonify({"error": "Invalid credentials"}), 401
 
     if not user.get("is_active", True):
         return jsonify({"error": "Account is blocked"}), 403
 
-    _reset_login_lock(email)
     token = secrets.token_hex(32)
     db["sessions"][token] = {
         "user_id": user_id,
@@ -1067,13 +1017,6 @@ def detect_intent_llm(user_message: str, history: list, api_key: str) -> dict:
     if re.search(r'\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b', user_message):
         return {"mode": "deploy", "reason": "IP-адрес в сообщении", "confidence": 1.0}
 
-    # Pre-check: URL + слова лендинг/сайт/создай → file (запускает lite_agent)
-    _msg_lower_pre = user_message.lower()
-    _has_url_pre = bool(re.search(r'https?://\S+', user_message))
-    _landing_kw = ["лендинг", "landing", "сайт", "создай", "сделай", "сгенерируй", "напиши", "скопируй", "сделай сайт", "сделай лендинг"]
-    if _has_url_pre and any(kw in _msg_lower_pre for kw in _landing_kw):
-        return {"mode": "file", "reason": "URL + лендинг/сайт/создай → lite_agent", "confidence": 0.95}
-
     # Формируем контекст из последних 3 сообщений
     recent = history[-3:] if history else []
     history_text = "\n".join([
@@ -1126,7 +1069,10 @@ def detect_intent_llm(user_message: str, history: list, api_key: str) -> dict:
     file_kw = ["word", "docx", ".pdf", " pdf", "pdf ", "pdf-", "сделай pdf", "создай pdf", "excel", "xlsx", "powerpoint", "pptx",
                 "скачать файл", "создай файл", "сгенерируй файл",
                 "сделай документ", "создай документ", "сделай таблицу", "создай таблицу",
-                "сделай отчёт", "создай отчёт", "сделай презентацию", "создай презентацию"]
+                "сделай отчёт", "создай отчёт", "сделай презентацию", "создай презентацию",
+                "лендинг", "landing", "лэндинг", "сделай сайт", "создай сайт", "сверстай сайт",
+                "html страниц", "html сайт", "сделай html", "создай html", "напиши html",
+                "сделай страниц", "создай страниц", "сделай веб", "создай веб"]
     research_kw = [
         # Явные команды поиска
         "найди в интернете", "поищи", "web search", "проверь сайт", "открой сайт",
@@ -1325,13 +1271,7 @@ def send_message(chat_id):
     has_url = bool(re.search(r'https?://\S+', user_message))
     if has_url and mode == "chat":
         is_browser_task = True
-    # URL + лендинг/сайт/создай → file mode → lite_agent (даже если is_browser_task)
-    _landing_kw2 = ["лендинг", "landing", "сайт", "создай", "сделай", "сгенерируй", "напиши"]
-    if has_url and any(kw in user_message.lower() for kw in _landing_kw2) and mode in ("chat", "research"):
-        mode = "file"
-        is_browser_task = False
-        is_file_task = True
-    is_lite_agent = (mode in ("file", "research", "data")) and not has_ssh and not (is_agent_task and has_ssh)
+    is_lite_agent = (mode in ("file", "research", "data") or (has_url and mode == "chat")) and not has_ssh and not (is_agent_task and has_ssh)
 
     # Build chat history for context
     history = [{"role": m["role"], "content": m["content"]} for m in chat["messages"][-10:]]

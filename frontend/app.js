@@ -902,7 +902,19 @@ const Chat = {
                 aiContent += evt.text || evt.content || evt.delta || '';
                 Messages.updateStreamContent(aiMsgEl, aiContent);
                 break;
-            case 'done':  // backend sends {type: 'done'} instead of [DONE]
+            case 'done':  // backend sends {type: 'done', cost: X, tokens_in: X, tokens_out: X}
+                if (evt.cost && evt.cost > 0) {
+                    state.totalCost += evt.cost;
+                    UI.updateCostBar();
+                    UI.updateFooterInfo();
+                    if (state.currentChatId) {
+                        const chat = state.chats.find(c => c.id === state.currentChatId);
+                        if (chat) {
+                            chat.total_cost = (chat.total_cost || 0) + evt.cost;
+                            ChatList.updateChatCost(state.currentChatId, chat.total_cost);
+                        }
+                    }
+                }
                 break;
             case 'meta':  // backend sends metadata at start, ignore
                 break;
