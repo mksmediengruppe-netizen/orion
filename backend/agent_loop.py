@@ -57,6 +57,17 @@ except ImportError as _e:
     logger = __import__("logging").getLogger("agent_loop")
     logger.warning(f"Intent clarifier not available: {_e}")
 
+# ── BUG-1 FIX: memory_v9 integration ────────────────────────
+try:
+    from memory_v9 import SuperMemoryEngine, ALL_MEMORY_TOOLS
+    _MEMORY_V9_AVAILABLE = True
+except ImportError as _me:
+    SuperMemoryEngine = None
+    ALL_MEMORY_TOOLS = []
+    _MEMORY_V9_AVAILABLE = False
+    _mem_logger = __import__("logging").getLogger("agent_loop")
+    _mem_logger.warning(f"memory_v9 not available: {_me}")
+
 logger = logging.getLogger("agent_loop")
 
 
@@ -649,6 +660,14 @@ ERROR_PATTERNS = {
 # ██ AGENT LOOP CLASS ██
 # ══════════════════════════════════════════════════════════════════
 
+# ── BUG-1 FIX: Extend TOOLS_SCHEMA with memory_v9 tools ──
+if _MEMORY_V9_AVAILABLE and ALL_MEMORY_TOOLS:
+    _existing_names = {t["function"]["name"] for t in TOOLS_SCHEMA}
+    for _mt in ALL_MEMORY_TOOLS:
+        if _mt["function"]["name"] not in _existing_names:
+            TOOLS_SCHEMA.append(_mt)
+
+
 class AgentLoop:
     """
     LangGraph-based autonomous agent loop v5.0.
@@ -686,6 +705,9 @@ class AgentLoop:
         self._ask_user_pending = None # Патч 5: ожидание ответа пользователя
         self._intent_result = None    # Результат intent clarifier
         self._session_cost = 0.0      # Текущая стоимость сессии
+
+        # BUG-1 FIX: memory_v9 engine
+        self.memory = None
 
         # LangGraph checkpointer
         self._checkpoint_conn = sqlite3.connect(
@@ -838,7 +860,7 @@ class AgentLoop:
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
-            "HTTP-Referer": "https://minimax.mksitdev.ru",
+            "HTTP-Referer": "https://orion.mksitdev.ru",
             "X-Title": "ORION Digital v1.0"
         }
 
@@ -878,12 +900,36 @@ class AgentLoop:
 
         return content, tool_calls, None
 
+    def _call_ai_simple(self, messages: list) -> str:
+        """Simple non-streaming AI call for memory_v9 internal use."""
+        try:
+            headers = {
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+                "HTTP-Referer": "https://orion.mksitdev.ru",
+                "X-Title": "ORION Digital v1.0"
+            }
+            payload = {
+                "model": self.model,
+                "messages": messages,
+                "temperature": 0.1,
+                "max_tokens": 2000,
+                "stream": False,
+            }
+            resp = http_requests.post(self.api_url, headers=headers, json=payload, timeout=30)
+            if resp.status_code == 200:
+                data = resp.json()
+                return data.get("choices", [{}])[0].get("message", {}).get("content", "")
+        except Exception as e:
+            logger.debug(f"_call_ai_simple error: {e}")
+        return ""
+
     def _call_ai_stream(self, messages, tools=None):
         """Call AI model with streaming. Circuit breaker + retry."""
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
-            "HTTP-Referer": "https://minimax.mksitdev.ru",
+            "HTTP-Referer": "https://orion.mksitdev.ru",
             "X-Title": "ORION Digital v1.0"
         }
 
@@ -2304,30 +2350,61 @@ ReactDOM.createRoot(document.getElementById('root')).render(<App />);
             except Exception as _ie:
                 logger.debug(f"Intent clarifier error: {_ie}")
 
+        # ── BUG-1 FIX: Инициализация memory_v9 ──────────────────
+        if _MEMORY_V9_AVAILABLE and SuperMemoryEngine:
+            try:
+                self.memory = SuperMemoryEngine(call_llm_func=self._call_ai_simple)
+                self.memory.init_task(
+                    user_message=user_message,
+                    file_content=file_content or "",
+                    user_id=getattr(self, "_user_id", None),
+                    chat_id=getattr(self, "_chat_id", None),
+                    api_key=self.api_key,
+                    api_url=self.api_url,
+                    ssh_host=self.ssh_credentials.get("host", "")
+                )
+            except Exception as _mem_err:
+                logger.warning(f"memory_v9 init failed: {_mem_err}")
+                self.memory = None
+
         # Build initial messages
-        messages = [{"role": "system", "content": AGENT_SYSTEM_PROMPT}]
+        if self.memory:
+            try:
+                messages = self.memory.build_messages(
+                    system_prompt=AGENT_SYSTEM_PROMPT,
+                    chat_history=chat_history,
+                    user_message=user_message,
+                    file_content=file_content or "",
+                    ssh_credentials=self.ssh_credentials
+                )
+            except Exception as _mem_err2:
+                logger.warning(f"memory_v9 build_messages failed: {_mem_err2}")
+                messages = [{"role": "system", "content": AGENT_SYSTEM_PROMPT}]
+                for msg in chat_history[-10:]:
+                    messages.append({"role": msg.get("role", "user"), "content": msg.get("content", "")})
+                messages.append({"role": "user", "content": user_message})
+        else:
+            messages = [{"role": "system", "content": AGENT_SYSTEM_PROMPT}]
+            for msg in chat_history[-10:]:
+                messages.append({"role": msg.get("role", "user"), "content": msg.get("content", "")})
+            full_message = user_message
+            if file_content:
+                max_file_len = 100000
+                if len(file_content) > max_file_len:
+                    file_content = file_content[:max_file_len] + f"\n... [обрезано, всего {len(file_content)} символов]"
+                full_message = f"{file_content}\n\n---\n\nЗадача:\n{user_message}"
+            if self.ssh_credentials.get("host"):
+                creds_hint = f"\n\n[Доступные серверы: {self.ssh_credentials['host']} (user: {self.ssh_credentials.get('username', 'root')})]"
+                full_message += creds_hint
+            messages.append({"role": "user", "content": full_message})
 
-        for msg in chat_history[-10:]:
-            messages.append({"role": msg.get("role", "user"), "content": msg.get("content", "")})
-
-        full_message = user_message
+        # Динамически увеличиваем MAX_ITERATIONS для больших файлов
         if file_content:
-            max_file_len = 100000
-            if len(file_content) > max_file_len:
-                file_content = file_content[:max_file_len] + f"\n... [обрезано, всего {len(file_content)} символов]"
-            full_message = f"{file_content}\n\n---\n\nЗадача:\n{user_message}"
-            # Динамически увеличиваем MAX_ITERATIONS для больших файлов
             file_size = len(file_content)
             if file_size > 50000:
-                self.MAX_ITERATIONS = 80  # Очень большой файл (50к+ символов)
+                self.MAX_ITERATIONS = 80
             elif file_size > 20000:
-                self.MAX_ITERATIONS = 60  # Большой файл (20к-50к символов)
-
-        if self.ssh_credentials.get("host"):
-            creds_hint = f"\n\n[Доступные серверы: {self.ssh_credentials['host']} (user: {self.ssh_credentials.get('username', 'root')})]"
-            full_message += creds_hint
-
-        messages.append({"role": "user", "content": full_message})
+                self.MAX_ITERATIONS = 60
 
         # Store user_message for fallback response
         self.user_message = user_message
@@ -2349,6 +2426,13 @@ ReactDOM.createRoot(document.getElementById('root')).render(<App />);
 
             tool_calls_received = None
             ai_text = ""
+
+            # ── BUG-1 FIX: before_iteration (GoalAnchor + Compaction) ──
+            if self.memory:
+                try:
+                    messages = self.memory.before_iteration(messages, iteration, self.MAX_ITERATIONS)
+                except Exception as _bi_err:
+                    logger.debug(f"memory before_iteration error: {_bi_err}")
 
             try:
                 for event in self._call_ai_stream(messages, tools=TOOLS_SCHEMA):
@@ -2421,6 +2505,28 @@ ReactDOM.createRoot(document.getElementById('root')).render(<App />);
                     })
                     return
 
+                # ── BUG-1 FIX: handle memory tools first ──
+                if self.memory:
+                    try:
+                        mem_result = self.memory.handle_tool(tool_name, tool_args)
+                        if mem_result is not None:
+                            result_str = str(mem_result)
+                            messages.append({
+                                "role": "tool",
+                                "tool_call_id": tool_id,
+                                "content": result_str[:self.MAX_TOOL_OUTPUT]
+                            })
+                            yield self._sse({
+                                "type": "tool_result",
+                                "tool": tool_name,
+                                "success": mem_result.get("success", True),
+                                "preview": str(mem_result)[:200],
+                                "elapsed": 0
+                            })
+                            continue
+                    except Exception as _ht_err:
+                        logger.debug(f"memory.handle_tool error: {_ht_err}")
+
                 # Execute the tool
                 start_time = time.time()
                 result = self._execute_tool(tool_name, tool_args_str)
@@ -2434,6 +2540,16 @@ ReactDOM.createRoot(document.getElementById('root')).render(<App />);
                     "elapsed": elapsed,
                     "timestamp": datetime.now(timezone.utc).isoformat()
                 })
+
+                # ── BUG-1 FIX: after_tool (ToolLearning, ErrorPatterns, SessionMemory) ──
+                if self.memory:
+                    try:
+                        result_str_mem = self.memory.after_tool(
+                            tool_name, tool_args, result,
+                            self._preview_result(tool_name, result)
+                        )
+                    except Exception as _at_err:
+                        logger.debug(f"memory.after_tool error: {_at_err}")
 
                 result_preview = self._preview_result(tool_name, result)
                 # Include screenshot for browser tools
@@ -2521,6 +2637,12 @@ ReactDOM.createRoot(document.getElementById('root')).render(<App />);
                 })
 
         if self._stop_requested:
+            # BUG-1 FIX: on_stop — сохранить прерванную задачу
+            if self.memory:
+                try:
+                    self.memory.on_stop(user_message, iteration)
+                except Exception as _os_err:
+                    logger.debug(f"memory.on_stop error: {_os_err}")
             yield self._sse({"type": "stopped", "text": "Агент остановлен пользователем"})
             return
 

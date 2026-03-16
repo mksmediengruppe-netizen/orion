@@ -35,6 +35,72 @@ logger = logging.getLogger("parallel_agents")
 
 
 # ══════════════════════════════════════════════════════════════
+# BUG-9 FIX: AGENT DIRECTORY ZONES
+# ══════════════════════════════════════════════════════════════
+AGENT_ZONES = {
+    "designer":   "/var/www/{project}/frontend/",
+    "developer":  "/var/www/{project}/backend/",
+    "devops":     "/etc/nginx/",
+    "integrator": "/var/www/{project}/integrations/",
+    "analyst":    "/var/www/{project}/reports/",
+    "qa":         "/var/www/{project}/tests/",
+}
+
+def get_agent_zone(agent_key: str, project: str = "orion") -> str:
+    """Получить рабочую директорию для агента."""
+    zone = AGENT_ZONES.get(agent_key, f"/var/www/{project}/")
+    return zone.replace("{project}", project)
+
+def build_zone_prompt(agent_key: str, project: str = "orion") -> str:
+    """Добавить в system prompt ограничение зоны."""
+    zone = get_agent_zone(agent_key, project)
+    return f"\n\n⚠️ ЗОНА РАБОТЫ: Работай ТОЛЬКО в директории {zone}. Не изменяй файлы вне этой зоны."
+
+
+# ══════════════════════════════════════════════════════════════
+# BUG-11 FIX: SHARED SCRATCHPAD (thread-safe)
+# ══════════════════════════════════════════════════════════════
+class SharedScratchpad:
+    """Thread-safe shared scratchpad для параллельных агентов."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._data: Dict[str, str] = {}
+        self._history: List[Dict] = []
+
+    def write(self, agent_key: str, content: str):
+        """Записать данные от агента."""
+        with self._lock:
+            self._data[agent_key] = content
+            self._history.append({
+                "agent": agent_key,
+                "content": content[:500],
+                "timestamp": time.time()
+            })
+
+    def read(self, agent_key: str = None) -> str:
+        """Прочитать данные (все или конкретного агента)."""
+        with self._lock:
+            if agent_key:
+                return self._data.get(agent_key, "")
+            parts = []
+            for key, val in self._data.items():
+                parts.append(f"[{key}]: {val[:300]}")
+            return "\n".join(parts)
+
+    def get_context_for_agent(self, agent_key: str) -> str:
+        """Получить контекст от других агентов для данного агента."""
+        with self._lock:
+            parts = []
+            for key, val in self._data.items():
+                if key != agent_key:
+                    parts.append(f"Агент {key} сообщает: {val[:200]}")
+            if parts:
+                return "\n\nКОНТЕКСТ ОТ ДРУГИХ АГЕНТОВ:\n" + "\n".join(parts)
+            return ""
+
+
+# ══════════════════════════════════════════════════════════════
 # PARALLEL AGENT ORCHESTRATOR
 # ══════════════════════════════════════════════════════════════
 
@@ -65,6 +131,8 @@ class ParallelAgentOrchestrator:
         self._event_queue = queue.Queue()
         self._agent_results = {}
         self._lock = threading.Lock()
+        # BUG-11 FIX: Shared scratchpad для межагентного обмена
+        self.shared_scratchpad = SharedScratchpad()
 
     def stop(self):
         """Request all agents to stop."""
@@ -100,15 +168,20 @@ class ParallelAgentOrchestrator:
         try:
             # Create dedicated AgentLoop for this agent
             agent_model = agent_config.get("preferred_model", self.model)
+            # BUG-9 FIX: zone restriction
+            _zone_hint = build_zone_prompt(agent_key)
             loop = AgentLoop(
                 model=agent_model,
                 api_key=self.api_key,
                 api_url=self.api_url,
                 ssh_credentials=self.ssh_credentials
             )
+            # BUG-11 FIX: shared scratchpad (thread-safe)
+            loop._shared_scratchpad = self.shared_scratchpad
+            loop._agent_zone = get_agent_zone(agent_key)
 
-            # Build context
-            context = user_message
+            # Build context (BUG-9: добавить zone hint)
+            context = user_message + _zone_hint
             if file_content:
                 context = f"{file_content}\n\n---\n\nЗадача:\n{user_message}"
 

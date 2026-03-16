@@ -27,6 +27,21 @@ const STATE = {
 
 const BACKEND = window.location.origin;
 
+// ── Auth helper: всегда добавляет Bearer token ──────────────
+function authHeaders(extra = {}) {
+  const h = { 'Content-Type': 'application/json', ...extra };
+  if (STATE.token) h['Authorization'] = `Bearer ${STATE.token}`;
+  return h;
+}
+
+async function authFetch(url, opts = {}) {
+  if (!opts.headers) opts.headers = {};
+  if (STATE.token) opts.headers['Authorization'] = `Bearer ${STATE.token}`;
+  opts.credentials = 'include';
+  return fetch(url, opts);
+}
+
+
 // ══════════════════════════════════════════════════════════════
 // MODE CONFIG
 // ══════════════════════════════════════════════════════════════
@@ -225,7 +240,7 @@ function initEventListeners() {
 
 async function checkAuth() {
   try {
-    const res = await fetch(`${BACKEND}/api/auth/me`, { credentials: 'include' });
+    const res = await authFetch(`${BACKEND}/api/auth/me`);
     if (res.ok) {
       const data = await res.json();
       STATE.token = data.token || 'cookie';
@@ -253,8 +268,7 @@ async function handleLogin(e) {
     const res = await fetch(`${BACKEND}/api/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify({ username, password }),
+      body: JSON.stringify({ email: username, password }),
     });
 
     const data = await res.json();
@@ -275,8 +289,8 @@ async function handleLogin(e) {
 
 async function handleLogout() {
   try {
-    await fetch(`${BACKEND}/api/auth/logout`, {
-      method: 'POST', credentials: 'include',
+    await authFetch(`${BACKEND}/api/auth/logout`, {
+      method: 'POST', ,
     });
   } catch {}
   STATE.token = null;
@@ -335,7 +349,7 @@ async function initApp() {
 
 async function loadSettings() {
   try {
-    const res = await fetch(`${BACKEND}/api/settings`, { credentials: 'include' });
+    const res = await authFetch(`${BACKEND}/api/settings`);
     if (res.ok) {
       const data = await res.json();
       if (data.ssh_host) DOM.sshHost.value = data.ssh_host;
@@ -428,7 +442,7 @@ function toggleMultiAgent() {
 
 async function loadChats() {
   try {
-    const res = await fetch(`${BACKEND}/api/chats`, { credentials: 'include' });
+    const res = await authFetch(`${BACKEND}/api/chats`);
     if (res.ok) {
       const data = await res.json();
       STATE.chats = data.chats || [];
@@ -457,7 +471,7 @@ function renderChatsList() {
 
 async function loadChat(chatId) {
   try {
-    const res = await fetch(`${BACKEND}/api/chats/${chatId}`, { credentials: 'include' });
+    const res = await authFetch(`${BACKEND}/api/chats/${chatId}`);
     if (res.ok) {
       const data = await res.json();
       STATE.currentChatId = chatId;
@@ -472,10 +486,9 @@ async function loadChat(chatId) {
 
 async function createNewChat() {
   try {
-    const res = await fetch(`${BACKEND}/api/chats`, {
+    const res = await authFetch(`${BACKEND}/api/chats`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
       body: JSON.stringify({ title: 'Новый чат' }),
     });
     if (res.ok) {
@@ -657,13 +670,12 @@ async function streamResponse(userMessage) {
       clearAttachments();
     }
 
-    const res = await fetch(endpoint, {
+    const res = await authFetch(endpoint, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Accept': 'text/event-stream',
       },
-      credentials: 'include',
       body: JSON.stringify(body),
       signal: STATE.abortController.signal,
     });
@@ -1038,10 +1050,9 @@ async function saveSettings() {
 
 async function saveSettingsToServer(settings) {
   try {
-    await fetch(`${BACKEND}/api/settings`, {
+    await authFetch(`${BACKEND}/api/settings`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
       body: JSON.stringify(settings),
     });
   } catch {}

@@ -105,8 +105,8 @@ MODEL_CONFIGS = {
     "original": {
         "name": "Оригинал",
         "emoji": "🔴",
-        "coding": {"model": "x-ai/grok-code-fast-1", "name": "Grok Code Fast 1", "input_price": 0.20, "output_price": 1.50},
-        "planner": {"model": "anthropic/claude-sonnet-4", "name": "Claude Sonnet 4.5", "input_price": 3.00, "output_price": 15.00},
+        "coding": {"model": "deepseek/deepseek-v3.2", "name": "Grok Code Fast 1", "input_price": 0.20, "output_price": 1.50},
+        "planner": {"model": "anthropic/claude-sonnet-4.6", "name": "Claude Sonnet 4.6", "input_price": 3.00, "output_price": 15.00},
         "tools": {"model": "deepseek/deepseek-v3.2", "name": "DeepSeek V3.2", "input_price": 0.26, "output_price": 0.38},
         "quality": 72.1,
         "monthly_cost": "$2,200"
@@ -114,8 +114,8 @@ MODEL_CONFIGS = {
     "premium": {
         "name": "Премиум",
         "emoji": "🟢",
-        "coding": {"model": "minimax/minimax-m2.5", "name": "MiniMax M2.5", "input_price": 0.27, "output_price": 0.95},
-        "planner": {"model": "anthropic/claude-sonnet-4", "name": "Claude Sonnet 4.5", "input_price": 3.00, "output_price": 15.00},
+        "coding": {"model": "deepseek/deepseek-v3.2", "name": "MiniMax M2.5", "input_price": 0.27, "output_price": 0.95},
+        "planner": {"model": "anthropic/claude-sonnet-4.6", "name": "Claude Sonnet 4.6", "input_price": 3.00, "output_price": 15.00},
         "tools": {"model": "deepseek/deepseek-v3.2", "name": "DeepSeek V3.2", "input_price": 0.26, "output_price": 0.38},
         "quality": 80.2,
         "monthly_cost": "$1,750"
@@ -124,7 +124,7 @@ MODEL_CONFIGS = {
         "name": "Бюджет",
         "emoji": "🔵",
         "coding": {"model": "deepseek/deepseek-v3.2", "name": "DeepSeek V3.2", "input_price": 0.26, "output_price": 0.38},
-        "planner": {"model": "deepseek/deepseek-r1", "name": "DeepSeek R1", "input_price": 0.40, "output_price": 1.75},
+        "planner": {"model": "deepseek/deepseek-v3.2", "name": "DeepSeek R1", "input_price": 0.40, "output_price": 1.75},
         "tools": {"model": "deepseek/deepseek-v3.2", "name": "DeepSeek V3.2", "input_price": 0.26, "output_price": 0.38},
         "quality": 75.8,
         "monthly_cost": "$750"
@@ -132,7 +132,7 @@ MODEL_CONFIGS = {
 }
 
 CHAT_MODELS = {
-    "qwen3": {"model": "qwen/qwen3-235b-a22b", "name": "Qwen3 235B", "lang": "RU ⭐⭐⭐⭐⭐", "input_price": 0.10, "output_price": 0.60},
+    "qwen3": {"model": "deepseek/deepseek-v3.2", "name": "Qwen3 235B", "lang": "RU ⭐⭐⭐⭐⭐", "input_price": 0.10, "output_price": 0.60},
     "deepseek": {"model": "deepseek/deepseek-v3.2", "name": "DeepSeek V3.2", "lang": "RU ⭐⭐⭐⭐⭐", "input_price": 0.26, "output_price": 0.38},
     "gpt5nano": {"model": "openai/gpt-4.1-nano", "name": "GPT-5 Nano", "lang": "RU ⭐⭐⭐⭐", "input_price": 0.05, "output_price": 0.40},
 }
@@ -177,7 +177,9 @@ _DEFAULT_DB = {
         "admin": {
             "id": "admin",
             "email": "ym@mksmedia.ru",
-            "password_hash": hashlib.sha256("qwerty1985".encode()).hexdigest(),
+            "password_hash": hashlib.sha256(
+                os.environ.get("ORION_ADMIN_PASSWORD", "qwerty1985").encode()
+            ).hexdigest(),  # BUG-4 FIX: пароль из env ORION_ADMIN_PASSWORD
             "name": "Администратор",
             "role": "admin",
             "created_at": datetime.now(timezone.utc).isoformat(),
@@ -292,7 +294,7 @@ def require_admin(f):
 def login():
     """Authenticate user and return session token."""
     data = request.get_json() or {}
-    email = data.get("email", "").strip().lower()
+    email = (data.get("email") or data.get("username") or "").strip().lower()
     password = data.get("password", "")
 
     if not email or not password:
@@ -1028,7 +1030,7 @@ def detect_intent_llm(user_message: str, history: list, api_key: str) -> dict:
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
-            "HTTP-Referer": "https://minimax.mksitdev.ru",
+            "HTTP-Referer": "https://orion.mksitdev.ru",
             "X-Title": "ORION Digital Orchestrator"
         }
         payload = {
@@ -1459,7 +1461,7 @@ def send_message(chat_id):
             headers = {
                 "Authorization": f"Bearer {OPENROUTER_API_KEY}",
                 "Content-Type": "application/json",
-                "HTTP-Referer": "https://minimax.mksitdev.ru",
+                "HTTP-Referer": "https://orion.mksitdev.ru",
                 "X-Title": "ORION Digital v4.0"
             }
 
@@ -1520,7 +1522,7 @@ def send_message(chat_id):
                 SELF_CHECK_MODELS = {
                     "light":  {"model": "openai/gpt-4.1-nano", "name": "GPT-4.1 Nano", "input_price": 0.10, "output_price": 0.40},
                     "medium": None,  # same model as main
-                    "deep":   {"model": "anthropic/claude-sonnet-4", "name": "Claude Sonnet 4", "input_price": 3.00, "output_price": 15.00},
+                    "deep":   {"model": "anthropic/claude-sonnet-4.6", "name": "Claude Sonnet 4", "input_price": 3.00, "output_price": 15.00},
                 }
                 check_config = SELF_CHECK_MODELS.get(self_check_level)
                 if self_check_level == "medium":
@@ -1712,6 +1714,18 @@ def send_message(chat_id):
         except Exception:
             pass  # Non-critical
 
+        # ── BUG-1 FIX: memory_v9 after_chat (Episodic, SelfReflection, KnowledgeGraph) ──
+        try:
+            if hasattr(agent, "memory") and agent.memory is not None:
+                agent.memory.after_chat(
+                    user_message=user_message,
+                    full_response=full_response,
+                    chat_id=chat_id,
+                    success="❌" not in full_response[:100]
+                )
+        except Exception as _ac_err:
+            pass  # Non-critical
+
         db_write(db2)
 
         # Send completion event with routing info
@@ -1739,6 +1753,172 @@ def stop_agent(chat_id):
             agent.stop()
             return jsonify({"ok": True, "message": "Agent stop requested"})
     return jsonify({"ok": False, "message": "No active agent for this chat"})
+
+
+
+# ── /api/chat — прямой роут (фронтенд v2.0 шлёт сюда) ────────
+@app.route("/api/chat", methods=["POST"])
+@app.route("/api/chat/multi-agent", methods=["POST"])
+@require_auth
+def direct_chat():
+    """Direct chat endpoint: auto-creates chat if needed, then streams response."""
+    import uuid as _uuid
+    data = request.get_json() or {}
+    user_message = data.get("message", "").strip()
+    file_content = data.get("file_content", "")
+    chat_id = data.get("chat_id")
+    orion_mode = data.get("mode", "turbo_standard")
+    multi_agent = data.get("multi_agent", False) or request.path.endswith("multi-agent")
+
+    if not user_message and not file_content:
+        return jsonify({"error": "Message required"}), 400
+
+    db = db_read()
+
+    # Создаём чат если не передан или не существует
+    if not chat_id or chat_id not in db["chats"]:
+        chat_id = str(_uuid.uuid4())
+        title = user_message[:50] if user_message else "Новый чат"
+        db["chats"][chat_id] = {
+            "id": chat_id,
+            "user_id": request.user_id,
+            "title": title,
+            "messages": [],
+            "created_at": time.time(),
+            "updated_at": time.time(),
+            "total_cost": 0.0,
+            "mode": orion_mode,
+        }
+        db_write(db)
+
+    # Проверяем доступ
+    chat = db["chats"].get(chat_id)
+    if chat.get("user_id") != request.user_id and request.user.get("role") != "admin":
+        return jsonify({"error": "Access denied"}), 403
+
+    # Rate limiting
+    rl = _get_rate_limiter()
+    allowed, rl_info = rl.check_message(request.user_id)
+    if not allowed:
+        return jsonify({"error": "Rate limit exceeded", "retry_after": rl_info.get("retry_after", 60)}), 429
+
+    # Spending limit
+    _user_data = db["users"].get(request.user_id, {})
+    _monthly_limit = _user_data.get("monthly_limit", 999999)
+    _total_spent = _user_data.get("total_spent", 0.0)
+    if _monthly_limit and _monthly_limit < 999999 and _total_spent >= _monthly_limit:
+        return jsonify({"error": "spending_limit_exceeded", "message": "Лимит исчерпан."}), 402
+
+    # Сохраняем сообщение пользователя
+    msg_id = str(_uuid.uuid4())
+    user_msg = {
+        "id": msg_id, "role": "user",
+        "content": user_message + (f"\n\n[Файл]:\n{file_content}" if file_content else ""),
+        "timestamp": time.time()
+    }
+    with _lock:
+        db2 = _load_db()
+        db2["chats"][chat_id]["messages"].append(user_msg)
+        db2["chats"][chat_id]["updated_at"] = time.time()
+        _save_db(db2)
+
+    # Получаем историю
+    history = db2["chats"][chat_id]["messages"][-20:]
+    user_settings = request.user.get("settings", {})
+
+    # Выбираем модель по режиму
+    from model_router import get_model_for_agent
+    _agent_cfg = get_model_for_agent("orchestrator", orion_mode)
+    model = _agent_cfg.get("model_id", "deepseek/deepseek-v3.2")
+    api_key = OPENROUTER_API_KEY
+
+    def generate():
+        from agent_loop import AgentLoop, MultiAgentLoop
+        import json as _json
+
+        assistant_content = ""
+        assistant_msg_id = str(_uuid.uuid4())
+        SSE = "\n\n"
+
+        # Отправляем chat_id клиенту сразу
+        yield "data: " + _json.dumps({"type": "chat_id", "chat_id": chat_id}) + SSE
+
+        try:
+            if multi_agent:
+                loop = MultiAgentLoop(
+                    model=model, api_key=api_key,
+                    orion_mode=orion_mode, session_id=chat_id
+                )
+            else:
+                loop = AgentLoop(
+                    model=model, api_key=api_key,
+                    orion_mode=orion_mode, session_id=chat_id
+                )
+
+            with _agents_lock:
+                _active_agents[chat_id] = loop
+
+            for raw_event in loop.run_stream(user_message, chat_history=history, file_content=file_content):
+                # run_stream() возвращает либо строку SSE ("data: {...}\n\n")
+                # либо dict — нормализуем оба варианта
+                if isinstance(raw_event, str):
+                    # Уже готовая SSE строка — парсим для накопления текста
+                    yield raw_event
+                    # Извлекаем content для сохранения
+                    if raw_event.startswith("data: "):
+                        try:
+                            ev = _json.loads(raw_event[6:].strip())
+                            ev_type = ev.get("type", "")
+                            if ev_type == "content":
+                                assistant_content += ev.get("text", ev.get("content", ""))
+                            elif ev_type in ("text", "text_complete"):
+                                assistant_content += ev.get("content", ev.get("text", ""))
+                        except Exception:
+                            pass
+                else:
+                    # dict — нормализуем тип и отправляем
+                    ev_type = raw_event.get("type", "")
+                    if ev_type == "text_delta":
+                        raw_event = {"type": "content", "text": raw_event.get("text", raw_event.get("content", ""))}
+                    elif ev_type == "text_complete":
+                        raw_event = {"type": "content", "text": raw_event.get("content", "")}
+                    yield "data: " + _json.dumps(raw_event) + SSE
+                    if ev_type in ("content", "text", "text_complete", "text_delta"):
+                        assistant_content += raw_event.get("text", raw_event.get("content", ""))
+
+        except Exception as e:
+            err_msg = "Ошибка агента: " + str(e)
+            yield "data: " + _json.dumps({"type": "error", "content": err_msg}) + SSE
+            assistant_content = err_msg
+        finally:
+            with _agents_lock:
+                _active_agents.pop(chat_id, None)
+
+            # Сохраняем ответ ассистента
+            if assistant_content:
+                asst_msg = {
+                    "id": assistant_msg_id, "role": "assistant",
+                    "content": assistant_content, "timestamp": time.time()
+                }
+                with _lock:
+                    db3 = _load_db()
+                    if chat_id in db3["chats"]:
+                        db3["chats"][chat_id]["messages"].append(asst_msg)
+                        db3["chats"][chat_id]["updated_at"] = time.time()
+                        _save_db(db3)
+
+            yield "data: " + _json.dumps({"type": "done", "chat_id": chat_id}) + SSE
+
+
+    return Response(
+        stream_with_context(generate()),
+        mimetype="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Access-Control-Allow-Origin": "*",
+        }
+    )
 
 
 # ── Quick Chat (non-streaming for simple questions) ────────────

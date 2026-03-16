@@ -174,7 +174,17 @@ class VectorMemory:
     MAX_CONTENT_LENGTH = 2000
 
     def __init__(self):
-        self._client = QdrantClient(":memory:")
+        # BUG-5 FIX: Qdrant persistent storage (не теряется при рестарте)
+        import os as _os
+        _qdrant_path = _os.path.join(
+            _os.environ.get("DATA_DIR", "/var/www/orion/backend/data"),
+            "qdrant_storage"
+        )
+        _os.makedirs(_qdrant_path, exist_ok=True)
+        try:
+            self._client = QdrantClient(path=_qdrant_path)
+        except Exception:
+            self._client = QdrantClient(":memory:")  # fallback
         self._embedder = TFIDFEmbedder()
         self._point_id_counter = 0
         self._initialized = False

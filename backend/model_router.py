@@ -49,8 +49,8 @@ MODELS = {
         "max_tokens": 65536
     },
     "sonnet": {
-        "id": "anthropic/claude-sonnet-4-5",
-        "name": "Claude Sonnet 4.5",
+        "id": "anthropic/claude-sonnet-4.6",
+        "name": "Claude Sonnet 4.6",
         "input_price": 3.00,
         "output_price": 15.00,
         "role": "brain",
@@ -307,9 +307,9 @@ def select_model(query: str, variant: str = "standard",
 def _get_fallback_chain(model_key: str) -> List[str]:
     """Цепочка fallback моделей."""
     chains = {
-        "sonnet":   ["anthropic/claude-sonnet-4-5", "google/gemini-2.5-pro", "deepseek/deepseek-v3.2"],
-        "gemini":   ["google/gemini-2.5-pro", "anthropic/claude-sonnet-4-5", "deepseek/deepseek-v3.2"],
-        "deepseek": ["deepseek/deepseek-v3.2", "google/gemini-2.5-pro", "anthropic/claude-sonnet-4-5"],
+        "sonnet":   ["anthropic/claude-sonnet-4.6", "google/gemini-2.5-pro", "deepseek/deepseek-v3.2"],
+        "gemini":   ["google/gemini-2.5-pro", "anthropic/claude-sonnet-4.6", "deepseek/deepseek-v3.2"],
+        "deepseek": ["deepseek/deepseek-v3.2", "google/gemini-2.5-pro", "anthropic/claude-sonnet-4.6"],
     }
     return chains.get(model_key, chains["deepseek"])
 
