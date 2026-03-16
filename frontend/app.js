@@ -182,18 +182,19 @@ const API = {
     delete: (path) => API.request('DELETE', path),
 
     async login(username, password) {
-        const fd = new FormData();
-        fd.append('username', username);
-        fd.append('password', password);
-        const res = await fetch(API_BASE + '/auth/token', {
+        const res = await fetch(API_BASE + '/auth/login', {
             method: 'POST',
-            body: fd
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email: username, password })
         });
         if (!res.ok) {
             const err = await res.json().catch(() => ({}));
-            throw new Error(err.detail || 'Неверный логин или пароль');
+            throw new Error(err.error || err.detail || 'Неверный логин или пароль');
         }
-        return res.json();
+        const data = await res.json();
+        // Normalize: backend returns {token, user}, frontend expects {access_token}
+        if (data.token && !data.access_token) data.access_token = data.token;
+        return data;
     },
 
     async uploadFile(file) {
@@ -229,7 +230,7 @@ const Auth = {
 
     async handleLogin(e) {
         e.preventDefault();
-        const username = $('auth-username').value.trim();
+        const username = $('auth-login').value.trim();
         const password = $('auth-password').value;
         const errEl = $('auth-error');
         const btn = $('auth-submit');
@@ -278,7 +279,7 @@ const Auth = {
         localStorage.removeItem('orion_token');
         localStorage.removeItem('orion_user');
         this.showAuthScreen();
-        $('auth-username').value = '';
+        $('auth-login').value = '';
         $('auth-password').value = '';
     }
 };
@@ -2023,6 +2024,11 @@ const AdminPanel = {
 /* ── INIT ─────────────────────────────────────────────────── */
 document.addEventListener('DOMContentLoaded', () => {
     Theme.init();
+
+    // Bind auth form BEFORE Auth.init so login works on first load
+    const authForm = $('auth-form');
+    if (authForm) authForm.addEventListener('submit', e => Auth.handleLogin(e));
+
     Auth.init();
 
     // Admin modal tabs
