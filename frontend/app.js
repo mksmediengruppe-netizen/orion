@@ -159,6 +159,9 @@ document.addEventListener('DOMContentLoaded', () => {
   initEventListeners();
   checkAuth();
   createToastContainer();
+  // Sprint 3: тема
+  const themeBtn = document.getElementById('theme-toggle');
+  if (themeBtn) themeBtn.addEventListener('click', toggleTheme);
 });
 
 function initEventListeners() {
@@ -290,7 +293,7 @@ async function handleLogin(e) {
 async function handleLogout() {
   try {
     await authFetch(`${BACKEND}/api/auth/logout`, {
-      method: 'POST', ,
+      method: 'POST',
     });
   } catch {}
   STATE.token = null;
@@ -1114,15 +1117,156 @@ function scrollToBottom() {
 // MARKDOWN RENDERER (lightweight)
 // ══════════════════════════════════════════════════════════════
 
+
+// ══════════════════════════════════════════════════════════════
+// SPRINT 3: ТЕМА (☀/🌙)
+// ══════════════════════════════════════════════════════════════
+
+const THEME_KEY = 'orion_theme';
+
+function initTheme() {
+  const saved = localStorage.getItem(THEME_KEY) || 'dark';
+  applyTheme(saved, false);
+}
+
+function applyTheme(theme, save = true) {
+  document.documentElement.setAttribute('data-theme', theme);
+  const btn = document.getElementById('theme-toggle');
+  if (btn) btn.textContent = theme === 'dark' ? '🌙' : '☀️';
+
+  // Переключаем highlight.js тему
+  const darkLink  = document.getElementById('hljs-theme-dark');
+  const lightLink = document.getElementById('hljs-theme-light');
+  if (darkLink)  darkLink.disabled  = (theme === 'light');
+  if (lightLink) lightLink.disabled = (theme === 'dark');
+
+  if (save) localStorage.setItem(THEME_KEY, theme);
+}
+
+function toggleTheme() {
+  const current = document.documentElement.getAttribute('data-theme') || 'dark';
+  applyTheme(current === 'dark' ? 'light' : 'dark');
+}
+
+// Инициализируем тему сразу при загрузке скрипта
+initTheme();
+
+// ══════════════════════════════════════════════════════════════
+// SPRINT 3: MARKDOWN — marked.js + highlight.js
+// ══════════════════════════════════════════════════════════════
+
+// Настраиваем marked.js с highlight.js
+function setupMarked() {
+  if (typeof marked === 'undefined') return false;
+
+  const renderer = new marked.Renderer();
+
+  // Кастомный рендер блоков кода — с заголовком и кнопкой копирования
+  renderer.code = function(code, lang) {
+    // В marked.js v9 code может быть объектом
+    if (typeof code === 'object' && code !== null) {
+      lang = code.lang || '';
+      code = code.text || '';
+    }
+    const langLabel = lang ? lang.toLowerCase() : 'code';
+    const highlighted = (typeof hljs !== 'undefined' && lang && hljs.getLanguage(lang))
+      ? hljs.highlight(code, { language: lang }).value
+      : (typeof hljs !== 'undefined' ? hljs.highlightAuto(code).value : escHtml(code));
+
+    const id = 'code-' + Math.random().toString(36).substr(2, 8);
+    return `<div class="code-block-wrap">
+  <div class="code-block-header">
+    <span class="code-lang-label">${escHtml(langLabel)}</span>
+    <button class="copy-code-btn" onclick="copyCode('${id}')">📋 Копировать</button>
+  </div>
+  <pre><code id="${id}" class="hljs language-${escHtml(langLabel)}">${highlighted}</code></pre>
+</div>`;
+  };
+
+  // Inline code
+  renderer.codespan = function(code) {
+    if (typeof code === 'object' && code !== null) code = code.text || '';
+    return `<code>${escHtml(code)}</code>`;
+  };
+
+  marked.setOptions({
+    renderer: renderer,
+    breaks: true,
+    gfm: true,
+  });
+
+  return true;
+}
+
+// Копирование кода
+window.copyCode = function(id) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const text = el.textContent || el.innerText;
+  navigator.clipboard.writeText(text).then(() => {
+    // Находим кнопку рядом с этим блоком
+    const btn = el.closest('.code-block-wrap')?.querySelector('.copy-code-btn');
+    if (btn) {
+      btn.textContent = '✅ Скопировано';
+      btn.classList.add('copied');
+      setTimeout(() => {
+        btn.textContent = '📋 Копировать';
+        btn.classList.remove('copied');
+      }, 2000);
+    }
+  }).catch(() => {
+    // Fallback для старых браузеров
+    const range = document.createRange();
+    range.selectNode(el);
+    window.getSelection().removeAllRanges();
+    window.getSelection().addRange(range);
+    document.execCommand('copy');
+    window.getSelection().removeAllRanges();
+  });
+};
+
+// ══════════════════════════════════════════════════════════════
+// SPRINT 3: renderMarkdown — используем marked.js если доступен
+// ══════════════════════════════════════════════════════════════
+
 function renderMarkdown(text) {
+  if (!text) return '';
+
+  // Используем marked.js если загружен
+  if (typeof marked !== 'undefined') {
+    // Инициализируем при первом вызове
+    if (!window._markedSetup) {
+      window._markedSetup = setupMarked();
+    }
+    try {
+      const html = marked.parse(text);
+      return html;
+    } catch (e) {
+      console.warn('marked.js error, fallback:', e);
+    }
+  }
+
+  // Fallback: собственный рендерер
+  return renderMarkdownFallback(text);
+}
+
+function renderMarkdownFallback(text) {
   if (!text) return '';
 
   let html = escHtml(text);
 
-  // Code blocks
-  html = html.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code) =>
-    `<pre><code class="lang-${lang}">${code.trim()}</code></pre>`
-  );
+  // Code blocks с кнопкой копирования
+  html = html.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code) => {
+    const id = 'code-' + Math.random().toString(36).substr(2, 8);
+    const langLabel = lang || 'code';
+    return `<div class="code-block-wrap">
+  <div class="code-block-header">
+    <span class="code-lang-label">${langLabel}</span>
+    <button class="copy-code-btn" onclick="copyCode('${id}')">📋 Копировать</button>
+  </div>
+  <pre><code id="${id}" class="lang-${langLabel}">${code.trim()}</code></pre>
+</div>`;
+  });
 
   // Inline code
   html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
@@ -1132,11 +1276,13 @@ function renderMarkdown(text) {
   html = html.replace(/^## (.+)$/gm, '<h2>$1</h2>');
   html = html.replace(/^# (.+)$/gm, '<h1>$1</h1>');
 
-  // Bold
+  // Bold & Italic
+  html = html.replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>');
   html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-
-  // Italic
   html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
+
+  // Blockquote
+  html = html.replace(/^&gt; (.+)$/gm, '<blockquote>$1</blockquote>');
 
   // Links
   html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
@@ -1151,7 +1297,7 @@ function renderMarkdown(text) {
   // Ordered lists
   html = html.replace(/^\d+\. (.+)$/gm, '<li>$1</li>');
 
-  // Tables (simple)
+  // Tables
   html = html.replace(/\|(.+)\|\n\|[-| :]+\|\n((?:\|.+\|\n?)+)/g, (_, header, rows) => {
     const ths = header.split('|').filter(c => c.trim()).map(c => `<th>${c.trim()}</th>`).join('');
     const trs = rows.trim().split('\n').map(row => {
@@ -1161,14 +1307,12 @@ function renderMarkdown(text) {
     return `<table><thead><tr>${ths}</tr></thead><tbody>${trs}</tbody></table>`;
   });
 
-  // Paragraphs (double newline)
+  // Paragraphs
   html = html.replace(/\n\n/g, '</p><p>');
   html = `<p>${html}</p>`;
-
-  // Single newlines
   html = html.replace(/\n/g, '<br>');
 
-  // Fix: remove empty paragraphs
+  // Cleanup
   html = html.replace(/<p><\/p>/g, '');
   html = html.replace(/<p>(<h[1-6]>)/g, '$1');
   html = html.replace(/(<\/h[1-6]>)<\/p>/g, '$1');
@@ -1179,6 +1323,8 @@ function renderMarkdown(text) {
   html = html.replace(/<p>(<table>)/g, '$1');
   html = html.replace(/(<\/table>)<\/p>/g, '$1');
   html = html.replace(/<p>(<hr>)<\/p>/g, '$1');
+  html = html.replace(/<p>(<blockquote>)/g, '$1');
+  html = html.replace(/(<\/blockquote>)<\/p>/g, '$1');
 
   return html;
 }
@@ -1188,6 +1334,7 @@ function renderMarkdown(text) {
 // ══════════════════════════════════════════════════════════════
 
 function createToastContainer() {
+  if (document.getElementById('toast-container')) return;
   const container = document.createElement('div');
   container.className = 'toast-container';
   container.id = 'toast-container';
@@ -1195,7 +1342,7 @@ function createToastContainer() {
 }
 
 function showToast(message, type = 'info', duration = 3000) {
-  const container = $('toast-container');
+  const container = document.getElementById('toast-container');
   if (!container) return;
 
   const toast = document.createElement('div');
@@ -1224,3 +1371,95 @@ function escHtml(str) {
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
 }
+
+// ══════════════════════════════════════════════════════════════
+// THEME TOGGLE (Блок 2 — Sprint 3)
+// ══════════════════════════════════════════════════════════════
+(function initTheme() {
+  var btn = document.getElementById('theme-toggle');
+  var html = document.documentElement;
+  var darkCss  = document.getElementById('hljs-theme-dark');
+  var lightCss = document.getElementById('hljs-theme-light');
+
+  function applyTheme(theme) {
+    html.setAttribute('data-theme', theme);
+    if (theme === 'light') {
+      if (darkCss)  darkCss.disabled  = true;
+      if (lightCss) lightCss.disabled = false;
+      if (btn) btn.textContent = '\u2600';
+    } else {
+      if (darkCss)  darkCss.disabled  = false;
+      if (lightCss) lightCss.disabled = true;
+      if (btn) btn.textContent = '\uD83C\uDF19';
+    }
+    localStorage.setItem('orion-theme', theme);
+  }
+
+  var saved = localStorage.getItem('orion-theme') || 'dark';
+  applyTheme(saved);
+
+  if (btn) {
+    btn.addEventListener('click', function() {
+      var current = html.getAttribute('data-theme') || 'dark';
+      applyTheme(current === 'dark' ? 'light' : 'dark');
+    });
+  }
+})();
+
+// ══════════════════════════════════════════════════════════════
+// MARKDOWN RENDER + CODE COPY (Блок 3 — Sprint 3)
+// ══════════════════════════════════════════════════════════════
+(function initMarkdown() {
+  if (typeof marked === 'undefined') return;
+
+  marked.setOptions({
+    breaks: true,
+    gfm: true
+  });
+
+  window.renderMarkdown = function(text) {
+    if (!text) return '';
+    try {
+      return marked.parse(text);
+    } catch(e) {
+      return text;
+    }
+  };
+
+  window.addCopyButtons = function(container) {
+    if (!container) return;
+    container.querySelectorAll('pre code').forEach(function(block) {
+      if (block.parentElement.querySelector('.copy-btn')) return;
+      var btn = document.createElement('button');
+      btn.className = 'copy-btn';
+      btn.textContent = 'Копировать';
+      btn.addEventListener('click', function() {
+        navigator.clipboard.writeText(block.textContent).then(function() {
+          btn.textContent = '\u2713 Скопировано';
+          setTimeout(function() { btn.textContent = 'Копировать'; }, 2000);
+        });
+      });
+      block.parentElement.style.position = 'relative';
+      block.parentElement.appendChild(btn);
+    });
+    if (typeof hljs !== 'undefined') {
+      container.querySelectorAll('pre code:not(.hljs)').forEach(function(b) {
+        hljs.highlightElement(b);
+      });
+    }
+  };
+})();
+
+// ══════════════════════════════════════════════════════════════
+// AUTO-HEIGHT TEXTAREA (Блок 3 — Sprint 3)
+// ══════════════════════════════════════════════════════════════
+document.addEventListener('DOMContentLoaded', function() {
+  var ta = document.getElementById('msgInput');
+  if (!ta) return;
+  function autoResize() {
+    ta.style.height = 'auto';
+    ta.style.height = Math.min(ta.scrollHeight, 200) + 'px';
+  }
+  ta.addEventListener('input', autoResize);
+  autoResize();
+});

@@ -1,11 +1,14 @@
 <!DOCTYPE html>
-<html lang="ru">
+<html lang="ru" data-theme="dark">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>ORION Digital — AI Business Platform</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔮</text></svg>">
   <link rel="stylesheet" href="/style.css">
+  <!-- highlight.js — подсветка кода -->
+  <link rel="stylesheet" id="hljs-theme-dark"  href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+  <link rel="stylesheet" id="hljs-theme-light" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" disabled>
 </head>
 <body>
   <!-- LOGIN SCREEN -->
@@ -31,7 +34,7 @@
           <span class="btn-loader hidden">⟳</span>
         </button>
       </form>
-      <div class="login-footer">ORION Digital v1.0 · Powered by DeepSeek · Gemini · Claude</div>
+      <div class="login-footer">ORION Digital v1.3 · Powered by DeepSeek · Gemini · Claude</div>
     </div>
   </div>
 
@@ -175,6 +178,8 @@
           <button class="btn-icon" id="multi-agent-toggle" title="Мульти-агент режим">
             <span id="multi-agent-icon">👤</span>
           </button>
+          <!-- ☀/🌙 ПЕРЕКЛЮЧАТЕЛЬ ТЕМЫ -->
+          <button class="btn-icon theme-toggle" id="theme-toggle" title="Переключить тему">🌙</button>
           <button class="btn-icon" id="settings-btn" title="Настройки">⚙</button>
         </div>
       </header>
@@ -184,7 +189,7 @@
         <div class="welcome-screen" id="welcome-screen">
           <div class="welcome-orb"></div>
           <h2>ORION Digital</h2>
-          <p>AI Business Platform · v1.0</p>
+          <p>AI Business Platform · v1.3</p>
           <div class="welcome-chips">
             <button class="chip" data-prompt="Создай лендинг для SaaS продукта с красивым дизайном">🎨 Создай лендинг</button>
             <button class="chip" data-prompt="Напиши Python скрипт для парсинга данных с сайта">💻 Напиши скрипт</button>
@@ -287,6 +292,10 @@
     </div>
   </div>
 
+  <!-- marked.js — markdown рендеринг -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/9.1.6/marked.min.js"></script>
+  <!-- highlight.js — подсветка кода -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>

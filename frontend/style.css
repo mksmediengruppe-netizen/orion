@@ -994,3 +994,241 @@ input:focus, textarea:focus {
 .toast.info { border-color: rgba(59,130,246,0.3); }
 
 @keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+
+/* ═══════════════════════════════════════════════════════════
+   SPRINT 3: СВЕТЛАЯ ТЕМА — CSS переменные
+   ═══════════════════════════════════════════════════════════ */
+
+/* Тёмная тема (по умолчанию) */
+:root,
+[data-theme="dark"] {
+  --bg-primary:    #0a0a0f;
+  --bg-secondary:  #111118;
+  --bg-card:       #16161f;
+  --bg-hover:      #1e1e2a;
+  --bg-input:      #1a1a24;
+  --border:        rgba(255,255,255,0.07);
+  --border-hover:  rgba(255,255,255,0.14);
+
+  --accent:        #7c5cfc;
+  --accent-hover:  #9070ff;
+  --accent-glow:   rgba(124,92,252,0.3);
+  --accent-2:      #00d4ff;
+  --accent-3:      #ff6b9d;
+
+  --text-primary:  #f0f0f8;
+  --text-secondary:#8888aa;
+  --text-muted:    #555570;
+
+  --success:       #22c55e;
+  --warning:       #f59e0b;
+  --error:         #ef4444;
+  --info:          #3b82f6;
+
+  --shadow: 0 4px 24px rgba(0,0,0,0.4);
+  --shadow-lg: 0 8px 48px rgba(0,0,0,0.6);
+
+  --code-bg:       rgba(0,0,0,0.4);
+  --code-border:   rgba(255,255,255,0.08);
+  --code-color:    #00d4ff;
+  --pre-bg:        rgba(0,0,0,0.4);
+}
+
+/* Светлая тема */
+[data-theme="light"] {
+  --bg-primary:    #f5f5fa;
+  --bg-secondary:  #ffffff;
+  --bg-card:       #ffffff;
+  --bg-hover:      #f0f0f8;
+  --bg-input:      #f8f8fc;
+  --border:        rgba(0,0,0,0.08);
+  --border-hover:  rgba(0,0,0,0.16);
+
+  --accent:        #6c4ef0;
+  --accent-hover:  #5a3fd4;
+  --accent-glow:   rgba(108,78,240,0.2);
+  --accent-2:      #0099cc;
+  --accent-3:      #e0457a;
+
+  --text-primary:  #1a1a2e;
+  --text-secondary:#555577;
+  --text-muted:    #9999bb;
+
+  --success:       #16a34a;
+  --warning:       #d97706;
+  --error:         #dc2626;
+  --info:          #2563eb;
+
+  --shadow: 0 4px 24px rgba(0,0,0,0.08);
+  --shadow-lg: 0 8px 48px rgba(0,0,0,0.12);
+
+  --code-bg:       rgba(0,0,0,0.04);
+  --code-border:   rgba(0,0,0,0.1);
+  --code-color:    #0066aa;
+  --pre-bg:        #f6f8fa;
+}
+
+/* Светлая тема — переопределения компонентов */
+[data-theme="light"] .login-screen {
+  background: radial-gradient(ellipse at 50% 0%, rgba(108,78,240,0.08) 0%, var(--bg-primary) 70%);
+}
+
+[data-theme="light"] ::-webkit-scrollbar-thumb {
+  background: rgba(0,0,0,0.15);
+}
+[data-theme="light"] ::-webkit-scrollbar-thumb:hover {
+  background: rgba(0,0,0,0.25);
+}
+
+[data-theme="light"] .message.assistant .msg-avatar {
+  background: linear-gradient(135deg, #e8e8f8, #d0d0f0);
+  border: 1px solid var(--border);
+}
+
+[data-theme="light"] .msg-bubble code {
+  background: var(--code-bg);
+  border: 1px solid var(--code-border);
+  color: var(--code-color);
+}
+
+[data-theme="light"] .msg-bubble pre {
+  background: var(--pre-bg);
+  border: 1px solid var(--code-border);
+}
+
+[data-theme="light"] .msg-bubble pre code {
+  background: none;
+  border: none;
+  color: var(--text-primary);
+}
+
+[data-theme="light"] .modal-overlay {
+  background: rgba(0,0,0,0.3);
+}
+
+[data-theme="light"] .toast {
+  box-shadow: 0 4px 16px rgba(0,0,0,0.1);
+}
+
+/* ── Переключатель темы ── */
+.theme-toggle {
+  font-size: 18px !important;
+  transition: transform 0.3s ease, opacity 0.2s ease;
+}
+.theme-toggle:hover {
+  transform: rotate(20deg) scale(1.1);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   SPRINT 3: MARKDOWN — улучшенные стили кода
+   ═══════════════════════════════════════════════════════════ */
+
+/* Блок кода с кнопкой копирования */
+.code-block-wrap {
+  position: relative;
+  margin: 8px 0;
+}
+
+.code-block-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: rgba(0,0,0,0.3);
+  border: 1px solid var(--code-border);
+  border-bottom: none;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  padding: 6px 12px;
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+[data-theme="light"] .code-block-header {
+  background: #e8e8f0;
+}
+
+.code-lang-label {
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--accent);
+}
+
+.copy-code-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 2px 8px;
+  transition: all 0.2s ease;
+  font-family: var(--font);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.copy-code-btn:hover {
+  color: var(--text-primary);
+  border-color: var(--accent);
+  background: var(--accent-glow);
+}
+
+.copy-code-btn.copied {
+  color: var(--success);
+  border-color: var(--success);
+}
+
+.code-block-wrap pre {
+  margin: 0 !important;
+  border-radius: 0 0 var(--radius-sm) var(--radius-sm) !important;
+  border-top: none !important;
+}
+
+/* Inline code */
+.msg-bubble code:not(pre code) {
+  background: var(--code-bg);
+  border: 1px solid var(--code-border);
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 1px 5px;
+  color: var(--code-color);
+}
+
+/* Таблицы в светлой теме */
+[data-theme="light"] .msg-bubble th {
+  background: rgba(108,78,240,0.08);
+}
+[data-theme="light"] .msg-bubble tr:nth-child(even) {
+  background: rgba(0,0,0,0.02);
+}
+
+/* Blockquote */
+.msg-bubble blockquote {
+  border-left: 3px solid var(--accent);
+  margin: 8px 0;
+  padding: 4px 12px;
+  color: var(--text-secondary);
+  background: rgba(124,92,252,0.05);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
+
+/* Горизонтальная линия */
+.msg-bubble hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 12px 0;
+}
+
+/* ── Автовысота textarea — плавная анимация ── */
+.message-input {
+  transition: height 0.1s ease;
+}
+
+/* ── Плавный переход темы ── */
+body, .sidebar, .main, .topbar, .input-area,
+.modal, .login-card, .msg-bubble, .tool-event-inner {
+  transition: background-color 0.25s ease, border-color 0.25s ease, color 0.15s ease;
+}
