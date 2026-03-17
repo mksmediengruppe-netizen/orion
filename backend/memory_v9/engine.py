@@ -119,6 +119,7 @@ class SuperMemoryEngine:
                        user_message: str, file_content: str = "",
                        ssh_credentials: Dict = None) -> List[Dict]:
         """Построить начальный массив messages со всеми слоями памяти."""
+        logger.info(f"[MEMORY] build_messages: user_id={self._user_id!r}, profile={self._profile is not None}")
         full_system = system_prompt
 
         # L5: User Profile
@@ -127,8 +128,13 @@ class SuperMemoryEngine:
                 ctx = self._profile.get_prompt_context()
                 if ctx:
                     full_system += f"\n\n{ctx}"
-            except:
-                pass
+                    logger.info(f"[MEMORY] build_messages: profile context injected ({len(ctx)} chars)")
+                else:
+                    logger.info(f"[MEMORY] build_messages: profile context EMPTY (no facts yet)")
+            except Exception as _pe:
+                logger.warning(f"[MEMORY] build_messages profile error: {_pe}")
+        else:
+            logger.warning(f"[MEMORY] build_messages: _profile is None!")
 
         # L3: Semantic Memory
         try:
@@ -384,6 +390,7 @@ class SuperMemoryEngine:
     def after_chat(self, user_message: str, full_response: str,
                    chat_id: str = None, success: bool = True):
         """Финализация после завершения чата."""
+        logger.info(f"[MEMORY] after_chat START: user_id={self._user_id!r}, chat_id={chat_id!r}, msg={user_message[:80]!r}")
         duration = time.time() - (self._task_start_time or time.time())
 
         # Episodic Replay
@@ -424,11 +431,19 @@ class SuperMemoryEngine:
             pass
 
         # User Profile extraction
+        if self._profile:
+            try:
+                self._profile.increment_chats()
+            except Exception as _ic_err:
+                logger.warning(f"[MEMORY] increment_chats error: {_ic_err}")
         if self._profile and self._call_llm:
             try:
+                logger.info(f"[MEMORY] calling extract_from_chat: user_id={self._user_id!r}")
                 self._profile.extract_from_chat(user_message, full_response, self._call_llm)
-            except:
-                pass
+            except Exception as _ef_err:
+                logger.warning(f"[MEMORY] extract_from_chat error: {_ef_err}", exc_info=True)
+        elif self._profile and not self._call_llm:
+            logger.warning(f"[MEMORY] extract_from_chat SKIPPED: _call_llm is None!")
 
         # LLM Fact Extractor (project_manager integration)
         try:

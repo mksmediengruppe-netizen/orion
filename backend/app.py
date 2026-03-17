@@ -1365,8 +1365,10 @@ def send_message(chat_id):
                 model=agent_model,
                 api_key=OPENROUTER_API_KEY,
                 api_url=OPENROUTER_BASE_URL,
-                ssh_credentials={}  # No SSH needed for file generation
+                ssh_credentials={},  # No SSH needed for file generation
+                user_id=request.user_id  # BUG-5 FIX
             )
+            agent._chat_id = chat_id  # BUG-5 FIX
 
             with _agents_lock:
                 _active_agents[chat_id] = agent
@@ -1434,8 +1436,10 @@ def send_message(chat_id):
                     model=agent_model,
                     api_key=OPENROUTER_API_KEY,
                     api_url=OPENROUTER_BASE_URL,
-                    ssh_credentials=ssh_credentials
+                    ssh_credentials=ssh_credentials,
+                    user_id=request.user_id  # BUG-5 FIX
                 )
+                agent._chat_id = chat_id  # BUG-5 FIX: передаём chat_id
 
             # Register agent for stop functionality
             with _agents_lock:
@@ -1518,6 +1522,53 @@ def send_message(chat_id):
 
 Если пользователь хочет чтобы ты выполнил задачу на сервере — попроси его настроить SSH в настройках (⚙️).
 Отвечай кратко и по делу."""
+
+            # ── BUG-5 FIX v4: читаем долгосрочную память и добавляем в system_prompt ──
+            try:
+                import logging as _lg
+                _mem_log = _lg.getLogger("memory.engine")
+
+                # Функция вызова LLM для extract_from_chat (нужна memory_v9)
+                def _mem_call_llm(msgs):
+                    try:
+                        _r = http_requests.post(
+                            OPENROUTER_BASE_URL,
+                            headers={"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"},
+                            json={"model": "openai/gpt-4.1-nano", "messages": msgs, "temperature": 0.1, "max_tokens": 512},
+                            timeout=15
+                        )
+                        return _r.json()["choices"][0]["message"]["content"]
+                    except Exception as _e:
+                        _mem_log.warning(f"[MEMORY] _mem_call_llm error: {_e}")
+                        return ""
+
+                from memory_v9 import SuperMemoryEngine
+                # SuperMemoryEngine.__init__ принимает call_llm_func — передаём его
+                _mem_v9 = SuperMemoryEngine(call_llm_func=_mem_call_llm)
+                _mem_v9.init_task(
+                    user_message=user_message,
+                    user_id=request.user_id,
+                    chat_id=chat_id,
+                    api_key=OPENROUTER_API_KEY,
+                    api_url=OPENROUTER_BASE_URL
+                )
+                # build_messages принимает chat_history (не history)
+                _mem_context = _mem_v9.build_messages(
+                    system_prompt=system_prompt,
+                    chat_history=[],
+                    user_message=user_message
+                )
+                # build_messages возвращает список — берём system из первого элемента
+                if _mem_context and _mem_context[0].get("role") == "system":
+                    _enriched_prompt = _mem_context[0]["content"]
+                    if _enriched_prompt != system_prompt:
+                        system_prompt = _enriched_prompt
+                        _mem_log.info(f"[MEMORY] CHAT MODE READ OK: +{len(_enriched_prompt)-len(system_prompt)} chars injected, user={request.user_id!r}")
+                    else:
+                        _mem_log.info(f"[MEMORY] CHAT MODE READ: no facts yet for user={request.user_id!r}")
+            except Exception as _mem_chat_err:
+                import logging as _lg
+                _lg.getLogger("memory.engine").warning(f"[MEMORY] CHAT MODE memory read failed: {_mem_chat_err}", exc_info=True)
 
             messages = [{"role": "system", "content": system_prompt}]
             for msg in history:
@@ -1788,17 +1839,61 @@ def send_message(chat_id):
         except Exception:
             pass  # Non-critical
 
-        # ── BUG-1 FIX: memory_v9 after_chat (Episodic, SelfReflection, KnowledgeGraph) ──
+        # ── BUG-5 FIX v3: memory_v9 after_chat — сохраняем факты для ВСЕХ режимов ──
         try:
-            if hasattr(agent, "memory") and agent.memory is not None:
-                agent.memory.after_chat(
+            import logging as _lg
+            _mem_logger = _lg.getLogger("memory.engine")
+
+            # Сохраняем через agent.memory если агент был создан
+            _agent_memory_saved = False
+            _agent_ref = locals().get("agent", None)
+            if _agent_ref is not None and hasattr(_agent_ref, "memory") and _agent_ref.memory is not None:
+                _agent_ref.memory.after_chat(
                     user_message=user_message,
                     full_response=full_response,
                     chat_id=chat_id,
                     success="❌" not in full_response[:100]
                 )
+                _agent_memory_saved = True
+                _mem_logger.info(f"[MEMORY] after_chat via agent.memory: OK, user={request.user_id!r}")
+
+            # Для CHAT MODE (без агента) — сохраняем напрямую через memory_v9
+            if not _agent_memory_saved and full_response:
+                try:
+                    def _mem_call_llm_save(msgs):
+                        try:
+                            _r = http_requests.post(
+                                OPENROUTER_BASE_URL,
+                                headers={"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"},
+                                json={"model": "openai/gpt-4.1-nano", "messages": msgs, "temperature": 0.1, "max_tokens": 512},
+                                timeout=15
+                            )
+                            return _r.json()["choices"][0]["message"]["content"]
+                        except Exception as _e:
+                            return ""
+
+                    from memory_v9 import SuperMemoryEngine
+                    # Передаём call_llm_func — без него extract_from_chat не работает!
+                    _mem_v9_save = SuperMemoryEngine(call_llm_func=_mem_call_llm_save)
+                    _mem_v9_save.init_task(
+                        user_message=user_message,
+                        user_id=request.user_id,
+                        chat_id=chat_id,
+                        api_key=OPENROUTER_API_KEY,
+                        api_url=OPENROUTER_BASE_URL
+                    )
+                    _mem_v9_save.after_chat(
+                        user_message=user_message,
+                        full_response=full_response,
+                        chat_id=chat_id,
+                        success="❌" not in full_response[:100]
+                    )
+                    _mem_logger.info(f"[MEMORY] after_chat SAVE OK: user={request.user_id!r}, msg={user_message[:60]!r}")
+                except Exception as _direct_err:
+                    _mem_logger.warning(f"[MEMORY] direct memory_v9 after_chat failed: {_direct_err}", exc_info=True)
         except Exception as _ac_err:
-            pass  # Non-critical
+            import logging as _lg
+            _lg.getLogger("memory.engine").error(f"[MEMORY] after_chat EXCEPTION: {_ac_err}", exc_info=True)
 
         db_write(db2)
 

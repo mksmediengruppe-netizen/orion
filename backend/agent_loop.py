@@ -686,11 +686,13 @@ class AgentLoop:
     MAX_HEAL_ATTEMPTS = 3
 
     def __init__(self, model, api_key, api_url="https://openrouter.ai/api/v1/chat/completions",
-                 ssh_credentials=None, orion_mode=None, session_id=None):
+                 ssh_credentials=None, orion_mode=None, session_id=None, user_id=None):
         self.model = model
         self.api_key = api_key
         self.api_url = api_url
         self.ssh_credentials = ssh_credentials or {}
+        self._user_id = user_id  # BUG-5 FIX: user_id для памяти
+        self._chat_id = None     # BUG-5 FIX: будет установлен из app.py
         self.browser = BrowserAgent()
         self.total_tokens_in = 0
         self.total_tokens_out = 0
@@ -2351,21 +2353,25 @@ ReactDOM.createRoot(document.getElementById('root')).render(<App />);
             except Exception as _ie:
                 logger.debug(f"Intent clarifier error: {_ie}")
 
-        # ── BUG-1 FIX: Инициализация memory_v9 ──────────────────
+        # ── BUG-5 FIX: Инициализация memory_v9 с user_id ──────────────────
         if _MEMORY_V9_AVAILABLE and SuperMemoryEngine:
             try:
+                _uid = getattr(self, "_user_id", None)
+                _cid = getattr(self, "_chat_id", None)
+                logger.info(f"[MEMORY] init_task: user_id={_uid!r}, chat_id={_cid!r}")
                 self.memory = SuperMemoryEngine(call_llm_func=self._call_ai_simple)
                 self.memory.init_task(
                     user_message=user_message,
                     file_content=file_content or "",
-                    user_id=getattr(self, "_user_id", None),
-                    chat_id=getattr(self, "_chat_id", None),
+                    user_id=_uid,
+                    chat_id=_cid,
                     api_key=self.api_key,
                     api_url=self.api_url,
                     ssh_host=self.ssh_credentials.get("host", "")
                 )
+                logger.info(f"[MEMORY] init_task OK: memory engine ready")
             except Exception as _mem_err:
-                logger.warning(f"memory_v9 init failed: {_mem_err}")
+                logger.warning(f"[MEMORY] memory_v9 init failed: {_mem_err}", exc_info=True)
                 self.memory = None
 
         # Build initial messages
@@ -2398,6 +2404,12 @@ ReactDOM.createRoot(document.getElementById('root')).render(<App />);
                 creds_hint = f"\n\n[Доступные серверы: {self.ssh_credentials['host']} (user: {self.ssh_credentials.get('username', 'root')})]"
                 full_message += creds_hint
             messages.append({"role": "user", "content": full_message})
+
+        # ── BUG-5 FIX: Извлечь контекст из долгосрочной памяти ──────────────
+        # ── BUG-5 FIX v2: recall/profile уже встроены в build_messages() ──
+        # build_messages() вызывает: profile.get_prompt_context() + semantic.search()
+        # Дополнительно форсируем сохранение семантической памяти из текущего сообщения
+        # ─────────────────────────────────────────────────────────────────────
 
         # Динамически увеличиваем MAX_ITERATIONS для больших файлов
         if file_content:
@@ -2504,6 +2516,17 @@ ReactDOM.createRoot(document.getElementById('root')).render(<App />);
                         "tool_call_id": tool_id,
                         "content": json.dumps(result, ensure_ascii=False)
                     })
+                    # ── BUG-5 FIX: Сохранить память при task_complete ──
+                    if self.memory:
+                        try:
+                            self.memory.after_chat(
+                                user_message=user_message,
+                                full_response=full_response_text or summary,
+                                chat_id=getattr(self, "_chat_id", None),
+                                success=True
+                            )
+                        except Exception as _mem_tc_err:
+                            logger.warning(f"Memory after_chat (task_complete) failed: {_mem_tc_err}")
                     return
 
                 # ── BUG-1 FIX: handle memory tools first ──
@@ -2646,6 +2669,19 @@ ReactDOM.createRoot(document.getElementById('root')).render(<App />);
                     logger.debug(f"memory.on_stop error: {_os_err}")
             yield self._sse({"type": "stopped", "text": "Агент остановлен пользователем"})
             return
+
+        # ── BUG-5 FIX: Сохранить диалог в долгосрочную память ───────────────
+        if self.memory:
+            try:
+                self.memory.after_chat(
+                    user_message=user_message,
+                    full_response=full_response_text,
+                    chat_id=getattr(self, "_chat_id", None),
+                    success=True
+                )
+            except Exception as _mem_save_err:
+                logger.warning(f"Memory save failed: {_mem_save_err}")
+        # ─────────────────────────────────────────────────────────────────────
 
         # Принудительный финальный ответ если агент достиг MAX_ITERATIONS без task_complete
         if not full_response_text.strip():

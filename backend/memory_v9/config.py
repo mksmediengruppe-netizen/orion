@@ -79,7 +79,7 @@ class MemoryConfig:
     SNAPSHOT_INTERVAL_HOURS = 6
 
     # ── Profile ──
-    PROFILE_EXTRACT_AFTER_N_CHATS = 3
+    PROFILE_EXTRACT_AFTER_N_CHATS = 1
     PROFILE_MAX_FACTS = 50
 
     # ── Collaborative ──
