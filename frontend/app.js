@@ -793,9 +793,9 @@ const Chat = {
     },
 
     scrollToBottom(smooth = true) {
-        const container = $('messages-container');
-        if (container) {
-            container.scrollTo({ top: container.scrollHeight, behavior: smooth ? 'smooth' : 'auto' });
+        const wrap = $('messages-wrap');
+        if (wrap) {
+            wrap.scrollTo({ top: wrap.scrollHeight, behavior: smooth ? 'smooth' : 'auto' });
         }
     },
 
