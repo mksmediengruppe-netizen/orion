@@ -33,6 +33,14 @@ from specialized_agents import (
 
 logger = logging.getLogger("parallel_agents")
 
+# Handoff Protocol — передача результатов между агентами
+try:
+    from handoff_protocol import HandoffManager, extract_handoff_from_output
+    _HANDOFF_AVAILABLE = True
+except ImportError:
+    _HANDOFF_AVAILABLE = False
+    logger.warning("handoff_protocol not available")
+
 
 # ══════════════════════════════════════════════════════════════
 # BUG-9 FIX: AGENT DIRECTORY ZONES
@@ -133,6 +141,8 @@ class ParallelAgentOrchestrator:
         self._lock = threading.Lock()
         # BUG-11 FIX: Shared scratchpad для межагентного обмена
         self.shared_scratchpad = SharedScratchpad()
+        # Handoff Protocol
+        self.handoff_manager = HandoffManager() if _HANDOFF_AVAILABLE else None
 
     def stop(self):
         """Request all agents to stop."""
@@ -379,6 +389,17 @@ class ParallelAgentOrchestrator:
                         "content": result_str
                     })
 
+            # Handoff Protocol: извлечь результат для передачи следующему агенту
+            if self.handoff_manager and _HANDOFF_AVAILABLE:
+                try:
+                    handoff = extract_handoff_from_output(
+                        agent_key, agent_text, loop.actions_log
+                    )
+                    self.handoff_manager.phase_results[agent_key] = handoff
+                    self.handoff_manager.global_context.append(handoff.to_context_string())
+                    logger.info(f"[Handoff] {agent_key}: {len(handoff.files_created)} files, {len(handoff.commands_executed)} cmds")
+                except Exception as e:
+                    logger.error(f"[Handoff] extract error for {agent_key}: {e}")
             # Store result for other agents
             with self._lock:
                 self._agent_results[agent_key] = agent_text
@@ -527,9 +548,16 @@ class ParallelAgentOrchestrator:
         if dependent_agents and not self._stop_requested:
             for agent in dependent_agents:
                 key = agent.get("key", agent.get("role", ""))
+                # Handoff: добавить контекст предыдущих агентов
+                _handoff_ctx = ""
+                if self.handoff_manager and _HANDOFF_AVAILABLE:
+                    _handoff_ctx = self.handoff_manager.get_context_for_next_agent(key)
+                _shared = dict(self._agent_results)
+                if _handoff_ctx:
+                    _shared["__handoff__"] = _handoff_ctx
                 result = self._run_single_agent(
                     key, agent, user_message, chat_history,
-                    file_content, self._agent_results
+                    file_content, _shared
                 )
                 all_results.append(result)
                 total_tokens_in += result.get("tokens_in", 0)
@@ -542,6 +570,14 @@ class ParallelAgentOrchestrator:
                     except queue.Empty:
                         break
 
+        # Handoff: emit summary
+        if self.handoff_manager and _HANDOFF_AVAILABLE:
+            try:
+                summary_sse = self.handoff_manager.format_summary_sse()
+                yield self._sse(summary_sse)
+                logger.info(f"[Handoff] Summary: {self.handoff_manager.get_summary()}")
+            except Exception as e:
+                logger.error(f"[Handoff] summary error: {e}")
         # Emit parallel completion
         yield self._sse({
             "type": "parallel_complete",

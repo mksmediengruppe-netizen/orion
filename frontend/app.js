@@ -1053,6 +1053,10 @@ const Chat = {
                 mode: state.mode,
                 attachments: attachments.map(a => a.id || a.url).filter(Boolean)
             };
+            // Multi-SSH: отправляем SSH данные активного сервера
+            if (typeof MultiSSH !== 'undefined') {
+                body.ssh = MultiSSH.getCredentials();
+            }
 
             const controller = new AbortController();
             state.streamController = controller;

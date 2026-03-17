@@ -1241,11 +1241,14 @@ def send_message(chat_id):
     self_check_level = user_settings.get("self_check_level", "none")  # none | light | medium | deep
     chat_model = user_settings.get("chat_model", "qwen3")
 
-    # Get SSH credentials from user settings
+    # Multi-SSH: поддержка нескольких серверов
+    # Фронтенд отправляет активный сервер в data.ssh или берём из settings
+    _ssh_from_request = data.get("ssh", {})
     ssh_credentials = {
-        "host": user_settings.get("ssh_host", ""),
-        "username": user_settings.get("ssh_user", "root"),
-        "password": user_settings.get("ssh_password", ""),
+        "host": _ssh_from_request.get("ssh_host") or user_settings.get("ssh_host", ""),
+        "username": _ssh_from_request.get("ssh_user") or user_settings.get("ssh_user", "root"),
+        "password": _ssh_from_request.get("ssh_password") or user_settings.get("ssh_password", ""),
+        "port": int(_ssh_from_request.get("ssh_port") or user_settings.get("ssh_port", 22)),
     }
 
     # ── Parse SSH credentials from message text ──
