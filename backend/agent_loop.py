@@ -686,7 +686,7 @@ class AgentLoop:
     MAX_HEAL_ATTEMPTS = 3
 
     def __init__(self, model, api_key, api_url="https://openrouter.ai/api/v1/chat/completions",
-                 ssh_credentials=None, orion_mode=None, session_id=None, user_id=None):
+                 ssh_credentials=None, orion_mode=None, session_id=None, user_id=None, **kwargs):
         self.model = model
         self.api_key = api_key
         self.api_url = api_url
@@ -707,6 +707,10 @@ class AgentLoop:
         self._ask_user_pending = None # Патч 5: ожидание ответа пользователя
         self._intent_result = None    # Результат intent clarifier
         self._session_cost = 0.0      # Текущая стоимость сессии
+
+        # ПАТЧ A2: model_override и system_prompt_override
+        self.model_override = kwargs.get('model_override', None)
+        self.custom_system_prompt = kwargs.get('system_prompt_override', None)
 
         # BUG-1 FIX: memory_v9 engine
         self.memory = None
@@ -936,8 +940,11 @@ class AgentLoop:
             "X-Title": "ORION Digital v1.0"
         }
 
+        # ПАТЧ A2: model_override — использовать переопределённую модель если задана
+        _model = self.model_override if self.model_override else self.model
+
         payload = {
-            "model": self.model,
+            "model": _model,
             "messages": messages,
             "temperature": 0.2,
             "max_tokens": 16000,
@@ -2426,11 +2433,16 @@ ReactDOM.createRoot(document.getElementById('root')).render(<App />);
                 logger.warning(f"[MEMORY] memory_v9 init failed: {_mem_err}", exc_info=True)
                 self.memory = None
 
+        # ПАТЧ A2: custom_system_prompt — добавить к AGENT_SYSTEM_PROMPT если задан
+        _effective_system_prompt = AGENT_SYSTEM_PROMPT
+        if self.custom_system_prompt:
+            _effective_system_prompt = AGENT_SYSTEM_PROMPT + "\n\n" + self.custom_system_prompt
+
         # Build initial messages
         if self.memory:
             try:
                 messages = self.memory.build_messages(
-                    system_prompt=AGENT_SYSTEM_PROMPT,
+                    system_prompt=_effective_system_prompt,
                     chat_history=chat_history,
                     user_message=user_message,
                     file_content=file_content or "",
@@ -2438,12 +2450,12 @@ ReactDOM.createRoot(document.getElementById('root')).render(<App />);
                 )
             except Exception as _mem_err2:
                 logger.warning(f"memory_v9 build_messages failed: {_mem_err2}")
-                messages = [{"role": "system", "content": AGENT_SYSTEM_PROMPT}]
+                messages = [{"role": "system", "content": _effective_system_prompt}]
                 for msg in chat_history[-10:]:
                     messages.append({"role": msg.get("role", "user"), "content": msg.get("content", "")})
                 messages.append({"role": "user", "content": user_message})
         else:
-            messages = [{"role": "system", "content": AGENT_SYSTEM_PROMPT}]
+            messages = [{"role": "system", "content": _effective_system_prompt}]
             for msg in chat_history[-10:]:
                 messages.append({"role": msg.get("role", "user"), "content": msg.get("content", "")})
             full_message = user_message

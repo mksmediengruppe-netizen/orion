@@ -158,6 +158,77 @@ INTENT_RULES = {
     },
 }
 
+
+# ══════════════════════════════════════════════════════════════
+# PRIMARY MODEL SELECTOR
+# ══════════════════════════════════════════════════════════════
+
+def select_primary_model(intent: str, message: str = "") -> str:
+    """
+    Выбрать основную LLM-модель для задачи.
+
+    Логика:
+      design / лендинг / сайт / страница / дизайн / UI / HTML / CSS / вёрстка / макет / баннер
+        → gemini
+      deploy / деплой / сервер / nginx / docker / SSL / SSH
+        → deepseek
+      code / скрипт / API / бэкенд / парсер / бот / функция
+        → deepseek
+      plan / архитектура / стратегия / план / проектирование
+        → sonnet
+      всё остальное
+        → deepseek
+    """
+    import re as _re
+    msg_lower = message.lower()
+
+    DESIGN_KEYWORDS = [
+        "лендинг", "сайт", "страница", "дизайн", "ui", "ux",
+        "html", "css", "вёрстка", "макет", "баннер", "landing",
+        "design", "layout", "wireframe", "mockup", "logo", "логотип",
+    ]
+    DEPLOY_KEYWORDS = [
+        "деплой", "deploy", "сервер", "server", "nginx", "docker",
+        "ssl", "ssh", "certbot", "vps", "хостинг", "kubernetes",
+        "ansible", "terraform", "ci/cd", "systemd",
+    ]
+    # Используем точные слова для CODE чтобы избежать подстрок в других словах
+    CODE_KEYWORDS_EXACT = [
+        "скрипт", "script", "api", "бэкенд", "backend", "парсер",
+        "parser", "функци", "function", "алгоритм", "algorithm",
+        "endpoint", "рефактор",
+    ]
+    # Слова требующие word-boundary (бот/bot/код/code могут быть частью других слов)
+    CODE_KEYWORDS_BOUNDARY = ["бот", "bot", "код", "code"]
+    PLAN_KEYWORDS = [
+        "архитектур", "architecture", "стратеги", "strategy",
+        "план", "plan", "проектирован", "roadmap", "дорожная карта",
+    ]
+
+    def _has_code_kw(text):
+        if any(kw in text for kw in CODE_KEYWORDS_EXACT):
+            return True
+        for kw in CODE_KEYWORDS_BOUNDARY:
+            if _re.search(r"\b" + _re.escape(kw) + r"\b", text):
+                return True
+        return False
+
+    # Порядок важен: design → plan → deploy → code → default
+    if intent == "design" or any(kw in msg_lower for kw in DESIGN_KEYWORDS):
+        return "gemini"
+
+    if intent == "plan" or any(kw in msg_lower for kw in PLAN_KEYWORDS):
+        return "sonnet"
+
+    if intent == "deploy" or any(kw in msg_lower for kw in DEPLOY_KEYWORDS):
+        return "deepseek"
+
+    if intent == "code" or _has_code_kw(msg_lower):
+        return "deepseek"
+
+    return "deepseek"
+
+
 # ══════════════════════════════════════════════════════════════
 # COMPLEXITY LEVELS
 # ══════════════════════════════════════════════════════════════
@@ -392,7 +463,10 @@ def clarify(message: str, history: List[Dict] = None,
         and primary_intent in ("deploy", "integrate", "code")
     ) else "sequential"
 
-    # 6. Estimate cost
+    # 6. Select primary model
+    primary_model = select_primary_model(primary_intent, message)
+
+    # 7. Estimate cost
     cost_per_complexity = {1: 0.001, 2: 0.005, 3: 0.02, 4: 0.08, 5: 0.25}
     estimated_cost = cost_per_complexity.get(complexity, 0.02)
     max_cost = get_max_cost(orion_mode)
@@ -412,6 +486,7 @@ def clarify(message: str, history: List[Dict] = None,
         "estimated_cost_usd": estimated_cost,
         "max_cost_usd": max_cost,
         "within_budget": estimated_cost <= max_cost,
+        "primary_model": primary_model,
     }
 
     logger.debug(f"Intent clarified: intent={primary_intent}, complexity={complexity}, "
