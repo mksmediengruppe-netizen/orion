@@ -812,6 +812,94 @@ const ChatList = {
 };
 
 /* ── CHAT ─────────────────────────────────────────────────── */
+
+// ── ПАТЧ B1: Tool Action Chips ──────────────────────────────────────
+function addToolChip(parentEl, toolName, args) {
+    if (!parentEl) return null;
+    const chip = document.createElement('div');
+    chip.className = 'tool-chip';
+    const emojis = {
+        'ssh_execute': '🔧', 'file_write': '📝', 'file_read': '📖',
+        'browser_navigate': '🌐', 'browser_screenshot': '📸',
+        'create_artifact': '🎨', 'generate_file': '📄',
+        'web_search': '🔍', 'code_interpreter': '💻',
+        'generate_chart': '📊', 'generate_image': '🎨',
+    };
+    const emoji = emojis[toolName] || '⚡';
+    const labels = {
+        'ssh_execute': 'Выполняю на сервере',
+        'file_write': 'Создаю файл',
+        'file_read': 'Читаю файл',
+        'browser_navigate': 'Открываю страницу',
+        'browser_screenshot': 'Делаю скриншот',
+        'create_artifact': 'Создаю дизайн',
+        'generate_file': 'Генерирую документ',
+        'web_search': 'Ищу в интернете',
+        'code_interpreter': 'Выполняю код',
+    };
+    const label = labels[toolName] || toolName;
+    const shortArgs = typeof args === 'string' ? args.substring(0, 60) : (args ? JSON.stringify(args).substring(0, 60) : '');
+    chip.innerHTML = '<span class="tool-chip-emoji">' + emoji + '</span>' +
+        '<span class="tool-chip-label">' + label + '</span>' +
+        (shortArgs ? '<span class="tool-chip-args">' + shortArgs + '</span>' : '') +
+        '<span class="tool-chip-spinner"></span>';
+    chip.dataset.toolId = Date.now();
+    parentEl.appendChild(chip);
+    return chip;
+}
+
+function completeToolChip(chip, success) {
+    if (!chip) return;
+    chip.classList.add(success ? 'done' : 'error');
+    const spinner = chip.querySelector('.tool-chip-spinner');
+    if (spinner) spinner.textContent = success ? '✅' : '❌';
+}
+// ── КОНЕЦ ПАТЧ B1 ────────────────────────────────────────────────────
+
+
+// ── ПАТЧ B1: Tool Action Chips ──────────────────────────────────────
+function addToolChip(parentEl, toolName, args) {
+    if (!parentEl) return null;
+    const chip = document.createElement('div');
+    chip.className = 'tool-chip';
+    const emojis = {
+        'ssh_execute': '🔧', 'file_write': '📝', 'file_read': '📖',
+        'browser_navigate': '🌐', 'browser_screenshot': '📸',
+        'create_artifact': '🎨', 'generate_file': '📄',
+        'web_search': '🔍', 'code_interpreter': '💻',
+        'generate_chart': '📊', 'generate_image': '🎨',
+    };
+    const emoji = emojis[toolName] || '⚡';
+    const labels = {
+        'ssh_execute': 'Выполняю на сервере',
+        'file_write': 'Создаю файл',
+        'file_read': 'Читаю файл',
+        'browser_navigate': 'Открываю страницу',
+        'browser_screenshot': 'Делаю скриншот',
+        'create_artifact': 'Создаю дизайн',
+        'generate_file': 'Генерирую документ',
+        'web_search': 'Ищу в интернете',
+        'code_interpreter': 'Выполняю код',
+    };
+    const label = labels[toolName] || toolName;
+    const shortArgs = typeof args === 'string' ? args.substring(0, 60) : (args ? JSON.stringify(args).substring(0, 60) : '');
+    chip.innerHTML = '<span class="tool-chip-emoji">' + emoji + '</span>' +
+        '<span class="tool-chip-label">' + label + '</span>' +
+        (shortArgs ? '<span class="tool-chip-args">' + shortArgs + '</span>' : '') +
+        '<span class="tool-chip-spinner"></span>';
+    chip.dataset.toolId = Date.now();
+    parentEl.appendChild(chip);
+    return chip;
+}
+
+function completeToolChip(chip, success) {
+    if (!chip) return;
+    chip.classList.add(success ? 'done' : 'error');
+    const spinner = chip.querySelector('.tool-chip-spinner');
+    if (spinner) spinner.textContent = success ? '✅' : '❌';
+}
+// ── КОНЕЦ ПАТЧ B1 ────────────────────────────────────────────────────
+
 const Chat = {
     async newChat() {
         if (state.isStreaming) Chat.stop();
@@ -1043,6 +1131,12 @@ const Chat = {
             case 'content':  // backend sends {type: 'content', text: '...'}
             case 'text':
             case 'delta':
+                // ПАТЧ B3: убираем индикатор "Думаю..." когда начинает приходить текст
+                {
+                    const _thinkEl = aiMsgEl ? aiMsgEl.querySelector('.thinking-indicator') : null;
+                    if (_thinkEl) _thinkEl.remove();
+                    state._thinkingShown = false;
+                }
                 aiContent += evt.text || evt.content || evt.delta || '';
                 Messages.updateStreamContent(aiMsgEl, aiContent);
                 Chat.smartScroll();  // УЛУЧ-1: автоскролл при каждом чанке
@@ -1088,6 +1182,17 @@ const Chat = {
                 ActivityPanel.show();
                 ActivityPanel.setStatus('running');
                 ActivityPanel.addLine('thinking', '🤔', evt.content || evt.text || '');
+                // ПАТЧ B3: показываем индикатор "Думаю..." в чате
+                if (!state._thinkingShown) {
+                    const _thinkBubble = aiMsgEl ? aiMsgEl.querySelector('.msg-bubble') : null;
+                    if (_thinkBubble && !_thinkBubble.querySelector('.thinking-indicator')) {
+                        const _indicator = document.createElement('div');
+                        _indicator.className = 'thinking-indicator';
+                        _indicator.innerHTML = '<span class="thinking-dot"></span><span class="thinking-dot"></span><span class="thinking-dot"></span>&nbsp;Анализирую задачу...';
+                        _thinkBubble.appendChild(_indicator);
+                        state._thinkingShown = true;
+                    }
+                }
                 break;
 
             // ── BUG-4 FIX: tool_start / tool ─────────────────────────
@@ -1096,11 +1201,30 @@ const Chat = {
                 ActivityPanel.show();
                 ActivityPanel.setStatus('running');
                 ActivityPanel.addLine('tool-start', this._toolEmoji(evt.tool || evt.name), (evt.tool || evt.name || 'tool') + ': ' + (evt.args ? JSON.stringify(evt.args).substring(0, 100) : ''));
+                // ПАТЧ B1: добавляем плашку в чат
+                {
+                    const _bubble = aiMsgEl ? aiMsgEl.querySelector('.msg-bubble') : null;
+                    if (_bubble) {
+                        state._lastToolChip = addToolChip(_bubble, evt.tool || evt.name || 'tool', evt.args || '');
+                    }
+                }
                 break;
 
             // ── BUG-4 FIX: tool_result — backend sends evt.preview, not evt.result ──
             case 'tool_result':
                 {
+                    // ПАТЧ B1: завершаем плашку
+                    if (state._lastToolChip) {
+                        const _isErr = evt.error || (evt.success === false);
+                        completeToolChip(state._lastToolChip, !_isErr);
+                        state._lastToolChip = null;
+                    }
+                    // ПАТЧ B1: завершаем плашку
+                    if (state._lastToolChip) {
+                        const _isErr = evt.error || (evt.success === false);
+                        completeToolChip(state._lastToolChip, !_isErr);
+                        state._lastToolChip = null;
+                    }
                     // Download button for file results
                     if (evt.file_path || evt.download_url || evt.file_id) {
                         const dlUrl = evt.download_url || evt.file_path || ('/api/files/' + evt.file_id + '/download');

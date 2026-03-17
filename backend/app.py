@@ -1432,12 +1432,29 @@ def send_message(chat_id):
                 )
             else:
                 # Single agent loop
+                # === МАРШРУТИЗАЦИЯ МОДЕЛИ (ПАТЧ A3) ===
+                _sm_model_override = None
+                _sm_extra_prompt = None
+                try:
+                    from intent_clarifier import clarify as _sm_clarify
+                    _sm_intent = _sm_clarify(user_message)
+                    _sm_primary = _sm_intent.get("primary_model", "")
+                    if _sm_primary == "gemini":
+                        _sm_model_override = "google/gemini-2.5-pro"
+                        _sm_extra_prompt = "РЕЖИМ ДИЗАЙНЕРА: Создавай красивые веб-страницы с Google Fonts, градиентами, анимациями. Сохраняй HTML в файл через file_write."
+                    elif _sm_primary == "sonnet":
+                        _sm_model_override = "anthropic/claude-sonnet-4.6"
+                except Exception:
+                    pass
+                # === КОНЕЦ МАРШРУТИЗАЦИИ ===
                 agent = AgentLoop(
                     model=agent_model,
                     api_key=OPENROUTER_API_KEY,
                     api_url=OPENROUTER_BASE_URL,
                     ssh_credentials=ssh_credentials,
-                    user_id=request.user_id  # BUG-5 FIX
+                    user_id=request.user_id,  # BUG-5 FIX
+                    model_override=_sm_model_override,
+                    system_prompt_override=_sm_extra_prompt
                 )
                 agent._chat_id = chat_id  # BUG-5 FIX: передаём chat_id
 
@@ -2021,9 +2038,26 @@ def direct_chat():
                     orion_mode=orion_mode, session_id=chat_id
                 )
             else:
+                # === МАРШРУТИЗАЦИЯ МОДЕЛИ (ПАТЧ A3) ===
+                _dc_model_override = None
+                _dc_extra_prompt = None
+                try:
+                    from intent_clarifier import clarify as _dc_clarify
+                    _dc_intent = _dc_clarify(user_message)
+                    _dc_primary = _dc_intent.get("primary_model", "")
+                    if _dc_primary == "gemini":
+                        _dc_model_override = "google/gemini-2.5-pro"
+                        _dc_extra_prompt = "РЕЖИМ ДИЗАЙНЕРА: Создавай красивые веб-страницы с Google Fonts, градиентами, анимациями. Сохраняй HTML в файл через file_write."
+                    elif _dc_primary == "sonnet":
+                        _dc_model_override = "anthropic/claude-sonnet-4.6"
+                except Exception:
+                    pass
+                # === КОНЕЦ МАРШРУТИЗАЦИИ ===
                 loop = AgentLoop(
                     model=model, api_key=api_key,
-                    orion_mode=orion_mode, session_id=chat_id
+                    orion_mode=orion_mode, session_id=chat_id,
+                    model_override=_dc_model_override,
+                    system_prompt_override=_dc_extra_prompt
                 )
 
             with _agents_lock:

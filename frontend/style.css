@@ -3014,3 +3014,83 @@ img { max-width: 100%; display: block; }
 .mode-info-text {
     line-height: 1.3;
 }
+
+/* ── ПАТЧ B2: Tool Action Chips ── */
+.tool-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    margin: 4px 0;
+    background: var(--bg-hover, rgba(255,255,255,0.05));
+    border: 1px solid var(--border, rgba(255,255,255,0.1));
+    border-radius: 8px;
+    font-size: 12px;
+    color: var(--text-secondary, #aaa);
+    transition: all 0.2s;
+    max-width: 100%;
+    overflow: hidden;
+}
+.tool-chip-emoji { font-size: 14px; flex-shrink: 0; }
+.tool-chip-label { font-weight: 500; color: var(--text-primary, #fff); white-space: nowrap; }
+.tool-chip-args {
+    color: var(--text-tertiary, #888);
+    font-family: var(--font-mono, monospace);
+    font-size: 11px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 200px;
+}
+.tool-chip-spinner {
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.tool-chip:not(.done):not(.error) .tool-chip-spinner::after {
+    content: '';
+    display: block;
+    width: 12px;
+    height: 12px;
+    border: 2px solid var(--border, rgba(255,255,255,0.2));
+    border-top-color: var(--accent, #6366f1);
+    border-radius: 50%;
+    animation: chip-spin 0.8s linear infinite;
+}
+@keyframes chip-spin { to { transform: rotate(360deg); } }
+
+.tool-chip.done {
+    background: rgba(16, 185, 129, 0.08);
+    border-color: rgba(16, 185, 129, 0.25);
+}
+.tool-chip.error {
+    background: rgba(239, 68, 68, 0.08);
+    border-color: rgba(239, 68, 68, 0.25);
+}
+
+/* ── ПАТЧ B3: Thinking Indicator ── */
+.thinking-indicator {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 8px 0;
+    color: var(--text-tertiary, #888);
+    font-size: 13px;
+}
+.thinking-dot {
+    width: 6px;
+    height: 6px;
+    background: var(--accent, #6366f1);
+    border-radius: 50%;
+    animation: thinking-bounce 1.4s ease-in-out infinite;
+    flex-shrink: 0;
+}
+.thinking-dot:nth-child(2) { animation-delay: 0.2s; }
+.thinking-dot:nth-child(3) { animation-delay: 0.4s; }
+@keyframes thinking-bounce {
+    0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
+    40% { transform: scale(1); opacity: 1; }
+}
