@@ -381,6 +381,9 @@ def login():
             "id": user_id,
             "email": user["email"],
             "name": user["name"],
+            # BUG-BACKEND-2 FIX: frontend expects username/full_name
+            "username": user["email"],
+            "full_name": user["name"],
             "role": user.get("role", "user"),
             "settings": user.get("settings", {})
         }
@@ -406,10 +409,15 @@ def get_me():
     total_spent = user.get("total_spent", 0.0)
     monthly_limit = user.get("monthly_limit", 999999)
     limit_pct = round(total_spent / max(monthly_limit, 0.01) * 100, 1) if monthly_limit < 999999 else 0
+    _name = user.get("name", user.get("email", ""))
+    _email = user.get("email", "")
     return jsonify({
         "id": request.user_id,
-        "email": user["email"],
-        "name": user["name"],
+        "email": _email,
+        "name": _name,
+        # BUG-BACKEND-1 FIX: frontend expects username/full_name
+        "username": _email,
+        "full_name": _name,
         "role": user.get("role", "user"),
         "settings": user.get("settings", {}),
         "total_spent": total_spent,
@@ -1338,6 +1346,8 @@ def send_message(chat_id):
 
     def generate():
         full_response = ""
+        tokens_in = 0  # CRИТ-2 FIX: инициализация до всех веток
+        tokens_out = 0  # КРИТ-2 FIX: инициализация до всех веток
 
         # Send metadata — show routed model info
         if (is_agent_task and has_ssh) or is_lite_agent:
@@ -1682,7 +1692,8 @@ def send_message(chat_id):
         _active_output_price = routed.get("output_price", config["coding"]["output_price"])
         cost_in = (tokens_in / 1_000_000) * _active_input_price
         cost_out = (tokens_out / 1_000_000) * _active_output_price
-        total_cost = round(cost_in + cost_out, 4)
+        total_cost = round(cost_in + cost_out, 6)
+        # КРИТ-2 FIX: используем реальную стоимость из расчёта токенов
 
         # Log cost via model_router for analytics
         try:
@@ -1792,6 +1803,8 @@ def send_message(chat_id):
         db_write(db2)
 
         # Send completion event with routing info
+        # КРИТ-2 FIX: отдельное событие 'cost' для frontend
+        yield f"data: {json.dumps({'type': 'cost', 'cost': total_cost, 'tokens_in': tokens_in, 'tokens_out': tokens_out})}\n\n"
         yield f"data: {json.dumps({'type': 'done', 'tokens_in': tokens_in, 'tokens_out': tokens_out, 'cost': total_cost, 'model': routed_model_name, 'tier': routed_tier, 'complexity': routed_complexity})}\n\n"
 
     return Response(
@@ -2093,7 +2106,12 @@ def get_analytics():
             "tokens_out": user_tokens_out,
             "monthly_limit": user.get("monthly_limit", 999999),
             "monthly_limit_rub": round(user.get("monthly_limit", 999999) * 105, 2),
-            "limit_used_percent": round(user_cost / max(user.get("monthly_limit", 999999), 1) * 100, 1)
+            "limit_used_percent": round(user_cost / max(user.get("monthly_limit", 999999), 1) * 100, 1),
+            # BUG-BACKEND-3 FIX: frontend expects username/full_name
+            "username": user.get("email", uid),
+            "full_name": user.get("name", ""),
+            "total_spent": user_cost,
+            "is_blocked": user.get("is_blocked", False)
         },
         "chats": chat_stats,
         "daily": daily_data,
@@ -2215,14 +2233,23 @@ def admin_update_user(user_id):
         return jsonify({"error": "User not found"}), 404
 
     # Update allowed fields
+    # BUG-BACKEND-4 FIX: accept both name/email and username/full_name from frontend
     if "name" in data:
         user["name"] = data["name"]
+    if "full_name" in data:
+        user["name"] = data["full_name"]
+    if "username" in data:
+        user["email"] = data["username"]
+    if "email" in data:
+        user["email"] = data["email"]
     if "role" in data:
         user["role"] = data["role"]
     if "monthly_limit" in data:
         user["monthly_limit"] = data["monthly_limit"]
     if "is_active" in data:
         user["is_active"] = data["is_active"]
+    if "is_blocked" in data:
+        user["is_blocked"] = data["is_blocked"]
     if "password" in data and data["password"]:
         user["password_hash"] = hashlib.sha256(data["password"].encode()).hexdigest()
 

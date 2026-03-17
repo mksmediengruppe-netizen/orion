@@ -81,8 +81,13 @@ const Utils = {
         return d.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' });
     },
     formatCost(n) {
-        if (!n) return '$0.000';
-        return '$' + Number(n).toFixed(3);
+        // КРИТ-2 FIX: умное форматирование — 6 знаков для малых сумм
+        const v = parseFloat(n);
+        if (!n || isNaN(v) || v === 0) return '$0.000';
+        if (v < 0.001) return '$' + v.toFixed(6);   // $0.000043
+        if (v < 0.01)  return '$' + v.toFixed(5);   // $0.00432
+        if (v < 0.1)   return '$' + v.toFixed(4);   // $0.0432
+        return '$' + v.toFixed(3);                   // $0.432
     },
     formatSize(bytes) {
         if (bytes < 1024) return bytes + ' B';
@@ -388,13 +393,16 @@ const UI = {
     },
 
     updateCostBar() {
-        const fill = document.querySelector('.cost-bar-fill');
-        const val = document.querySelector('.cost-bar-value');
-        if (!fill || !val) return;
-        const pct = Math.min(100, (state.totalCost / state.monthlyLimit) * 100);
-        fill.style.width = pct + '%';
-        fill.className = 'cost-bar-fill' + (pct > 80 ? ' danger' : pct > 50 ? ' warn' : '');
-        val.textContent = Utils.formatCost(state.totalCost) + ' / $' + state.monthlyLimit.toFixed(2);
+        // BUG-11 FIX: HTML uses id=budget-fill and id=budget-text
+        const fill = $('budget-fill') || document.querySelector('.cost-bar-fill, .budget-fill');
+        const val = $('budget-text') || document.querySelector('.cost-bar-value, .budget-value');
+        if (!fill && !val) return;
+        const pct = Math.min(100, (state.totalCost / (state.monthlyLimit || 2)) * 100);
+        if (fill) {
+            fill.style.width = pct + '%';
+            fill.className = (fill.id === 'budget-fill' ? 'budget-fill' : 'cost-bar-fill') + (pct > 80 ? ' danger' : pct > 50 ? ' warn' : '');
+        }
+        if (val) val.textContent = Utils.formatCost(state.totalCost) + ' / $' + (state.monthlyLimit || 2).toFixed(2);
     },
 
     updateFooterInfo() {
@@ -410,8 +418,9 @@ const UI = {
     },
 
     updateChatTitle(title) {
-        const inp = $('chat-title-input');
-        if (inp) inp.value = title || 'Новый чат';
+        // BUG-5 FIX: HTML uses id="chat-title" (h1 contenteditable), not chat-title-input
+        const el = $('chat-title');
+        if (el) el.textContent = title || 'Новый чат';
     },
 
     setStreaming(active) {
@@ -519,10 +528,10 @@ const UI = {
             fileInput.addEventListener('change', e => Attachments.handleFiles(e.target.files));
         }
 
-        // Chat title rename
-        const titleInput = $('chat-title-input');
+        // Chat title rename (BUG-5 FIX: id=chat-title, contenteditable)
+        const titleInput = $('chat-title');
         if (titleInput) {
-            titleInput.addEventListener('blur', () => Chat.renameCurrentChat(titleInput.value));
+            titleInput.addEventListener('blur', () => Chat.renameCurrentChat(titleInput.textContent));
             titleInput.addEventListener('keydown', e => {
                 if (e.key === 'Enter') titleInput.blur();
                 if (e.key === 'Escape') {
@@ -620,6 +629,9 @@ const ChatList = {
             // Normalize: backend may return [{chat: {...}}, ...] or [{id, ...}, ...]
             const rawChats = data.chats || data || [];
             state.chats = rawChats.map(c => c.chat || c);
+            // FIX CRИТ-2: Инициализируем totalCost из суммы всех чатов при загрузке
+            state.totalCost = state.chats.reduce((sum, c) => sum + (c.total_cost || 0), 0);
+            UI.updateCostBar();
             this.render();
         } catch (e) {
             console.warn('ChatList.load error:', e);
@@ -765,12 +777,20 @@ const Chat = {
 
         const chat = state.chats.find(c => c.id === chatId);
         UI.updateChatTitle(chat?.title || 'Чат');
+        // FIX КРИТ-2: Восстанавливаем currentChatCost из данных чата при открытии
+        state.currentChatCost = chat?.total_cost || 0;
+        UI.updateFooterInfo();
 
         try {
             const data = await API.get('/chats/' + chatId);
             // Backend returns {chat: {messages: [...], ...}}
             const chatData = data.chat || data;
             state.messages = chatData.messages || data.messages || [];
+            // FIX КРИТ-2: Обновляем currentChatCost из свежих данных чата
+            if (chatData.total_cost !== undefined) {
+                state.currentChatCost = chatData.total_cost || 0;
+                UI.updateFooterInfo();
+            }
             this.renderMessages();
         } catch (e) {
             Toast.show('Ошибка загрузки чата', 'error');
@@ -955,15 +975,19 @@ const Chat = {
                 Messages.updateStreamContent(aiMsgEl, aiContent);
                 break;
             case 'done':  // backend sends {type: 'done', cost: X, tokens_in: X, tokens_out: X}
-                if (evt.cost && evt.cost > 0) {
-                    state.totalCost += evt.cost;
-                    state.currentChatCost = (state.currentChatCost || 0) + evt.cost;
+                {
+                    // КРИТ-2 FIX: parseFloat гарантирует число даже если cost пришёл строкой
+                    const doneCost = parseFloat(evt.cost) || 0;
+                    if (doneCost > 0) {
+                        state.totalCost = (state.totalCost || 0) + doneCost;
+                        state.currentChatCost = (state.currentChatCost || 0) + doneCost;
+                    }
                     UI.updateCostBar();
                     UI.updateFooterInfo();
-                    if (state.currentChatId) {
+                    if (state.currentChatId && doneCost > 0) {
                         const chat = state.chats.find(c => c.id === state.currentChatId);
                         if (chat) {
-                            chat.total_cost = (chat.total_cost || 0) + evt.cost;
+                            chat.total_cost = (chat.total_cost || 0) + doneCost;
                             ChatList.updateChatCost(state.currentChatId, chat.total_cost);
                         }
                     }
@@ -1022,6 +1046,7 @@ const Chat = {
             case 'cost':
                 {
                     const costVal = evt.cost || evt.amount || 0;
+                    // FIX КРИТ-2: накапливаем стоимость в state
                     state.totalCost += costVal;
                     state.currentChatCost = (state.currentChatCost || 0) + costVal;
                     UI.updateCostBar();
@@ -1072,6 +1097,20 @@ const Chat = {
         Toast.show('Остановлено', 'warning');
     },
 
+    regenerate() {
+        // BUG-14 FIX: Regenerate last AI response
+        const lastUserMsg = [...state.messages].reverse().find(m => m.role === 'user');
+        if (!lastUserMsg) return;
+        // Remove last AI message from DOM
+        const msgs = document.querySelectorAll('#messages-container .message.ai');
+        if (msgs.length) msgs[msgs.length - 1].remove();
+        // Remove last AI message from state
+        const lastAiIdx = [...state.messages].reverse().findIndex(m => m.role === 'assistant');
+        if (lastAiIdx !== -1) state.messages.splice(state.messages.length - 1 - lastAiIdx, 1);
+        // Resend
+        this._doSend(lastUserMsg.content, []);
+    },
+
     sendFromChip(text) {
         const textarea = $('message-input');
         if (textarea) {
@@ -1090,7 +1129,7 @@ const Chat = {
 
     async renameChat(chatId, title) {
         try {
-            await API.put('/chats/' + chatId, { title });
+            await API.put('/chats/' + chatId + '/rename', { title });
             const chat = state.chats.find(c => c.id === chatId);
             if (chat) chat.title = title;
             ChatList.render();
@@ -1514,13 +1553,12 @@ const ActivityPanel = {
     },
 
     setStatus(status) {
-        const statusEl = document.querySelector('.activity-status');
-        const pulseEl = document.querySelector('.status-pulse');
-        if (!statusEl || !pulseEl) return;
-        const labels = { running: 'Работает', done: 'Завершено', waiting: 'Ожидает' };
-        statusEl.className = 'activity-status ' + status;
-        pulseEl.className = 'status-pulse ' + (status === 'running' ? '' : status);
-        statusEl.innerHTML = `<span class="status-pulse ${status === 'running' ? '' : status}"></span>${labels[status] || status}`;
+        // BUG-6 FIX: HTML uses .status-dot and #status-text, not .status-pulse
+        const dotEl = document.querySelector('.status-dot');
+        const textEl = $('status-text');
+        const labels = { running: 'Работает', done: 'Завершено', waiting: 'Ожидает', idle: 'Ожидает' };
+        if (dotEl) dotEl.className = 'status-dot ' + status;
+        if (textEl) textEl.textContent = labels[status] || status;
     },
 
     addLine(type, emoji, text, collapsible = false) {
@@ -1798,7 +1836,7 @@ const Lightbox = {
 /* ── TOAST ────────────────────────────────────────────────── */
 const Toast = {
     show(message, type = 'info', duration = 3000) {
-        const container = document.querySelector('.toast-container');
+        const container = $('toast-container') || document.querySelector('.toast-container');
         if (!container) return;
         const icons = { success: '✅', error: '❌', warning: '⚠️', info: 'ℹ️' };
         const toast = el('div', 'toast ' + type);
@@ -1832,9 +1870,10 @@ const AdminPanel = {
     },
 
     async loadTab(tab) {
+        // BUG-7 FIX: HTML uses .tab-btn and #tab-{name}, not .modal-tab and #admin-tab-{name}
         this.currentTab = tab;
-        $$('.modal-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
-        $$('.modal-tab-content').forEach(c => c.classList.toggle('active', c.id === 'admin-tab-' + tab));
+        $$('.tab-btn').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
+        $$('.tab-content').forEach(c => c.classList.toggle('active', c.id === 'tab-' + tab));
 
         switch (tab) {
             case 'users': await this.loadUsers(); break;
@@ -1972,7 +2011,26 @@ const AdminPanel = {
         container.innerHTML = '<div class="empty-state"><div class="spinner"></div></div>';
 
         try {
-            const data = await API.get('/admin/analytics');
+            const raw = await API.get('/admin/stats');  // BUG-3 FIX: backend uses /admin/stats
+            // Normalize backend stats to frontend analytics format
+            const dailyStats = raw.daily_stats || {};
+            const today = new Date().toISOString().slice(0, 10);
+            const todayData = dailyStats[today] || {};
+            const data = {
+                today: todayData.cost || 0,
+                today_requests: todayData.requests || 0,
+                week: raw.total_cost || 0,
+                week_requests: raw.total_requests || 0,
+                month: raw.total_cost || 0,
+                month_requests: raw.total_requests || 0,
+                total_users: raw.total_users || 0,
+                total_chats: raw.total_chats || 0,
+                total_messages: raw.total_messages || 0,
+                total_cost: raw.total_cost || 0,
+                daily: Object.entries(dailyStats).sort().map(([date, d]) => ({ date, cost: d.cost || 0, requests: d.requests || 0 })),
+                top_users: [],
+                model_breakdown: []
+            };
             state.adminData.analytics = data;
             this.renderAnalytics(data);
         } catch (e) {
@@ -1992,14 +2050,14 @@ const AdminPanel = {
                     <div class="analytics-card-sub">${data.today_requests || 0} запросов</div>
                 </div>
                 <div class="analytics-card">
-                    <div class="analytics-card-label">Эта неделя</div>
-                    <div class="analytics-card-value">${Utils.formatCost(data.week || 0)}</div>
-                    <div class="analytics-card-sub">${data.week_requests || 0} запросов</div>
+                    <div class="analytics-card-label">Всего расходов</div>
+                    <div class="analytics-card-value">${Utils.formatCost(data.total_cost || 0)}</div>
+                    <div class="analytics-card-sub">${data.month_requests || 0} запросов</div>
                 </div>
                 <div class="analytics-card">
-                    <div class="analytics-card-label">Этот месяц</div>
-                    <div class="analytics-card-value">${Utils.formatCost(data.month || 0)}</div>
-                    <div class="analytics-card-sub">${data.month_requests || 0} запросов</div>
+                    <div class="analytics-card-label">Пользователей</div>
+                    <div class="analytics-card-value">${data.total_users || 0}</div>
+                    <div class="analytics-card-sub">${data.total_chats || 0} чатов</div>
                 </div>
             </div>
             <div class="analytics-chart-wrap">
@@ -2086,40 +2144,54 @@ const AdminPanel = {
     },
 
     showCreateUser() {
-        const modal = $('user-modal');
+        // BUG-10 FIX: HTML uses id=create-user-modal, edit-user-id, user-form-*, user-form-pass-group
+        const modal = $('create-user-modal');
         if (!modal) return;
-        $('user-modal-title').textContent = 'Создать пользователя';
-        $('user-form').reset();
-        $('user-id').value = '';
-        $('user-password-group').style.display = '';
+        const titleEl = $('user-modal-title');
+        if (titleEl) titleEl.textContent = 'Создать пользователя';
+        const form = $('user-form');
+        if (form) form.reset();
+        const idEl = $('edit-user-id');
+        if (idEl) idEl.value = '';
+        const passGroup = $('user-form-pass-group');
+        if (passGroup) passGroup.style.display = '';
         modal.classList.remove('hidden');
     },
 
     showEditUser(userId) {
+        // BUG-10 FIX: correct HTML IDs
         const user = state.adminData.users.find(u => u.id === userId);
         if (!user) return;
-        const modal = $('user-modal');
+        const modal = $('create-user-modal');
         if (!modal) return;
-        $('user-modal-title').textContent = 'Редактировать пользователя';
-        $('user-id').value = userId;
-        $('user-username').value = user.username;
-        $('user-fullname').value = user.full_name || '';
-        $('user-role').value = user.role;
-        $('user-limit').value = user.monthly_limit || 2;
-        $('user-password-group').style.display = 'none';
+        const titleEl = $('user-modal-title');
+        if (titleEl) titleEl.textContent = 'Редактировать пользователя';
+        const idEl = $('edit-user-id');
+        if (idEl) idEl.value = userId;
+        const loginEl = $('user-form-login');
+        if (loginEl) loginEl.value = user.username;
+        const nameEl = $('user-form-name');
+        if (nameEl) nameEl.value = user.full_name || '';
+        const roleEl = $('user-form-role');
+        if (roleEl) roleEl.value = user.role;
+        const limitEl = $('user-form-limit');
+        if (limitEl) limitEl.value = user.monthly_limit || 2;
+        const passGroup = $('user-form-pass-group');
+        if (passGroup) passGroup.style.display = 'none';
         modal.classList.remove('hidden');
     },
 
     async saveUser(e) {
         e.preventDefault();
-        const userId = $('user-id').value;
+        // BUG-10 FIX: correct HTML IDs for user form
+        const userId = ($('edit-user-id') || {}).value || '';
         const data = {
-            username: $('user-username').value.trim(),
-            full_name: $('user-fullname').value.trim(),
-            role: $('user-role').value,
-            monthly_limit: parseFloat($('user-limit').value) || 2
+            username: ($('user-form-login') || {}).value?.trim() || '',
+            full_name: ($('user-form-name') || {}).value?.trim() || '',
+            role: ($('user-form-role') || {}).value || 'user',
+            monthly_limit: parseFloat(($('user-form-limit') || {}).value) || 2
         };
-        const password = $('user-password').value;
+        const password = ($('user-form-password') || {}).value || '';
         if (password) data.password = password;
 
         try {
@@ -2169,8 +2241,8 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     });
 
-    // Admin modal close
-    const adminClose = document.querySelector('#admin-modal .modal-close');
+    // Admin modal close (BUG-8 FIX: HTML uses id=btn-admin-close)
+    const adminClose = $('btn-admin-close');
     if (adminClose) adminClose.addEventListener('click', () => AdminPanel.close());
 
     // Admin modal overlay click
@@ -2185,13 +2257,13 @@ document.addEventListener('DOMContentLoaded', () => {
     const userForm = $('user-form');
     if (userForm) userForm.addEventListener('submit', e => AdminPanel.saveUser(e));
 
-    // User modal close
-    const userModalClose = document.querySelector('#user-modal .modal-close');
-    if (userModalClose) userModalClose.addEventListener('click', () => $('user-modal').classList.add('hidden'));
+    // User modal close (BUG-10 FIX: correct IDs)
+    const userModalClose = $('btn-user-modal-close');
+    if (userModalClose) userModalClose.addEventListener('click', () => $('create-user-modal').classList.add('hidden'));
 
     // User modal cancel
     const userCancel = $('btn-user-cancel');
-    if (userCancel) userCancel.addEventListener('click', () => $('user-modal').classList.add('hidden'));
+    if (userCancel) userCancel.addEventListener('click', () => $('create-user-modal').classList.add('hidden'));
 
     initResizable();
 

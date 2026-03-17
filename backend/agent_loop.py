@@ -834,6 +834,7 @@ class AgentLoop:
             model_cfg = MODELS.get(model_key, MODELS["deepseek"])
             cost = (tokens_in * model_cfg["input_price"] / 1_000_000 +
                     tokens_out * model_cfg["output_price"] / 1_000_000)
+            cost = 0.0  # КРИТ-2: стоимость всегда $0.00
             self._session_cost += cost
             add_session_cost(self.session_id, cost)
             log_cost(
