@@ -711,6 +711,9 @@ class AgentLoop:
         # ПАТЧ A2: model_override и system_prompt_override
         self.model_override = kwargs.get('model_override', None)
         self.custom_system_prompt = kwargs.get('system_prompt_override', None)
+        # Orchestrator v2 может переопределить модель и промпт
+        self._orchestrator_prompt = ""
+        self._orchestrator_plan = None
 
         # BUG-1 FIX: memory_v9 engine
         self.memory = None
@@ -2433,10 +2436,14 @@ ReactDOM.createRoot(document.getElementById('root')).render(<App />);
                 logger.warning(f"[MEMORY] memory_v9 init failed: {_mem_err}", exc_info=True)
                 self.memory = None
 
-        # ПАТЧ A2: custom_system_prompt — добавить к AGENT_SYSTEM_PROMPT если задан
+        # ПАТЧ A2 + Orchestrator v2: custom_system_prompt и _orchestrator_prompt
         _effective_system_prompt = AGENT_SYSTEM_PROMPT
+        # Добавить промпт от оркестратора (специфичный для агента)
+        if hasattr(self, '_orchestrator_prompt') and self._orchestrator_prompt:
+            _effective_system_prompt = self._orchestrator_prompt + "\n\n" + AGENT_SYSTEM_PROMPT
+        # Добавить custom_system_prompt (от старого ПАТЧ A2)
         if self.custom_system_prompt:
-            _effective_system_prompt = AGENT_SYSTEM_PROMPT + "\n\n" + self.custom_system_prompt
+            _effective_system_prompt = _effective_system_prompt + "\n\n" + self.custom_system_prompt
 
         # Build initial messages
         if self.memory:

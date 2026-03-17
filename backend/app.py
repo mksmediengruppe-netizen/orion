@@ -33,6 +33,17 @@ import requests as http_requests
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from agent_loop import AgentLoop, MultiAgentLoop
+
+# ORION Orchestrator v2 — умный планировщик задач
+try:
+    from orchestrator_v2 import (
+        Orchestrator, get_agent_prompt, get_model_for_agent as orch_get_model,
+        get_model_id, format_plan_sse, AGENT_PROMPTS, MODEL_MAP
+    )
+    _ORCHESTRATOR_AVAILABLE = True
+except ImportError as _orch_err:
+    logger.warning(f"Orchestrator v2 not available: {_orch_err}")
+    _ORCHESTRATOR_AVAILABLE = False
 from ssh_executor import SSHExecutor, ssh_pool
 from browser_agent import BrowserAgent
 from memory import get_memory, MemoryEntry, MemoryType
@@ -1404,6 +1415,38 @@ def send_message(chat_id):
                 pm = None
                 memory_context = ""
 
+            # ── Orchestrator v2: определить агентов по плану ──
+            _orch_plan_send = None
+            if _ORCHESTRATOR_AVAILABLE:
+                try:
+                    def _orch_llm_send(messages, model=None):
+                        import requests as _rq
+                        resp = _rq.post(
+                            OPENROUTER_BASE_URL + "/chat/completions",
+                            headers={"Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                                     "Content-Type": "application/json"},
+                            json={"model": model or "deepseek/deepseek-v3.2", 
+                                  "messages": messages, "max_tokens": 2000},
+                            timeout=30
+                        )
+                        return resp.json().get("choices",[{}])[0].get("message",{}).get("content","")
+                    
+                    _orch_send = Orchestrator(_orch_llm_send, mode)
+                    _orch_plan_send = _orch_send.plan(user_message, history, 
+                                                       has_ssh=bool(ssh_credentials.get("host")))
+                    
+                    # Отправить план клиенту
+                    if _orch_plan_send and _orch_plan_send.get("mode") != "chat":
+                        yield f"data: {json.dumps(format_plan_sse(_orch_plan_send))}\n\n"
+                    
+                    # Переопределить модель если нужно
+                    _pm = _orch_plan_send.get("primary_model", "")
+                    if _pm and _pm in MODEL_MAP:
+                        agent_model = MODEL_MAP[_pm]
+                        
+                except Exception as _oe:
+                    logger.warning(f"Orchestrator in send_message: {_oe}")
+            
             # ── Select agent execution mode ──
             selected_agents = select_agents_for_task(user_message, mode)
             use_parallel = len(selected_agents) >= 2 and enhanced
@@ -2032,33 +2075,89 @@ def direct_chat():
         yield "data: " + _json.dumps({"type": "chat_id", "chat_id": chat_id}) + SSE
 
         try:
+            # ── ORION Orchestrator v2: умная маршрутизация ──
+            _orch_model_override = None
+            _orch_prompt_extra = ""
+            _orch_plan = None
+            
+            if _ORCHESTRATOR_AVAILABLE:
+                try:
+                    # Функция для вызова LLM из оркестратора
+                    def _orch_call_llm(messages, model=None):
+                        import requests as _req
+                        _model = model or "deepseek/deepseek-v3.2"
+                        resp = _req.post(
+                            OPENROUTER_BASE_URL + "/chat/completions",
+                            headers={"Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                                     "Content-Type": "application/json"},
+                            json={"model": _model, "messages": messages, "max_tokens": 2000},
+                            timeout=30
+                        )
+                        data = resp.json()
+                        return data.get("choices", [{}])[0].get("message", {}).get("content", "")
+                    
+                    # Определить SSH
+                    _has_ssh = bool(user_settings.get("ssh_host", ""))
+                    _ssh_info = f"host={user_settings.get('ssh_host','')}" if _has_ssh else ""
+                    
+                    # Создать оркестратор и получить план
+                    _orch = Orchestrator(_orch_call_llm, orion_mode)
+                    _orch_plan = _orch.plan(
+                        user_message, 
+                        chat_history=history,
+                        has_ssh=_has_ssh,
+                        ssh_info=_ssh_info
+                    )
+                    
+                    # Отправить план клиенту
+                    if _orch_plan and _orch_plan.get("mode") != "chat":
+                        yield "data: " + _json.dumps(format_plan_sse(_orch_plan)) + SSE
+                    
+                    # Если оркестратор хочет спросить пользователя
+                    if _orch_plan and _orch_plan.get("ask_user"):
+                        yield "data: " + _json.dumps({
+                            "type": "ask_user",
+                            "question": _orch_plan["ask_user"]
+                        }) + SSE
+                    
+                    # Определить модель и промпт из плана
+                    if _orch_plan:
+                        _pm = _orch_plan.get("primary_model", "")
+                        _pa = _orch_plan.get("primary_agent", "")
+                        
+                        if _pm and _pm in MODEL_MAP:
+                            _orch_model_override = MODEL_MAP[_pm]
+                        
+                        if _pa and _pa in AGENT_PROMPTS:
+                            _orch_prompt_extra = AGENT_PROMPTS[_pa]
+                        
+                        if _orch_plan.get("mode") in ("multi_sequential", "multi_parallel"):
+                            multi_agent = True
+                    
+                    logger.info(f"Orchestrator: mode={_orch_plan.get('mode')}, model={_orch_model_override}, agent={_orch_plan.get('primary_agent')}")
+                    
+                except Exception as _orch_e:
+                    logger.warning(f"Orchestrator failed, using default: {_orch_e}")
+            
+            # ── Создание AgentLoop с учётом оркестратора ──
+            _final_model = _orch_model_override or model
+            
             if multi_agent:
                 loop = MultiAgentLoop(
-                    model=model, api_key=api_key,
+                    model=_final_model, api_key=api_key,
                     orion_mode=orion_mode, session_id=chat_id
                 )
             else:
-                # === МАРШРУТИЗАЦИЯ МОДЕЛИ (ПАТЧ A3) ===
-                _dc_model_override = None
-                _dc_extra_prompt = None
-                try:
-                    from intent_clarifier import clarify as _dc_clarify
-                    _dc_intent = _dc_clarify(user_message)
-                    _dc_primary = _dc_intent.get("primary_model", "")
-                    if _dc_primary == "gemini":
-                        _dc_model_override = "google/gemini-2.5-pro"
-                        _dc_extra_prompt = "РЕЖИМ ДИЗАЙНЕРА: Создавай красивые веб-страницы с Google Fonts, градиентами, анимациями. Сохраняй HTML в файл через file_write."
-                    elif _dc_primary == "sonnet":
-                        _dc_model_override = "anthropic/claude-sonnet-4.6"
-                except Exception:
-                    pass
-                # === КОНЕЦ МАРШРУТИЗАЦИИ ===
                 loop = AgentLoop(
-                    model=model, api_key=api_key,
-                    orion_mode=orion_mode, session_id=chat_id,
-                    model_override=_dc_model_override,
-                    system_prompt_override=_dc_extra_prompt
+                    model=_final_model, api_key=api_key,
+                    orion_mode=orion_mode, session_id=chat_id
                 )
+            
+            # Передать промпт агента и план
+            if _orch_prompt_extra:
+                loop._orchestrator_prompt = _orch_prompt_extra
+            if _orch_plan:
+                loop._orchestrator_plan = _orch_plan
 
             with _agents_lock:
                 _active_agents[chat_id] = loop
