@@ -881,7 +881,11 @@ const ChatList = {
             // Normalize: backend may return [{chat: {...}}, ...] or [{id, ...}, ...]
             const rawChats = data.chats || data || [];
             state.chats = rawChats.map(c => c.chat || c);
-            // FIX CRИТ-2: Инициализируем totalCost из суммы всех чатов при загрузке
+            // BUG-12v2: Cache chats in localStorage for resilience
+            if (state.chats.length) {
+                try { localStorage.setItem('orion_chats_cache', JSON.stringify(state.chats)); } catch(e) {}
+            }
+            // FIX КРИТ-2: Инициализируем totalCost из суммы всех чатов при загрузке
             state.totalCost = state.chats.reduce((sum, c) => sum + (c.total_cost || 0), 0);
             UI.updateCostBar();
             this.render();
