@@ -22,6 +22,7 @@ const API_BASE = '/api';
 const SSE_TIMEOUT = 120000;
 
 const MODES = {
+    'auto':          { label: 'Авто',            tag: 'AUTO',  desc: 'Автоматический выбор модели по сложности задачи.' },
     'turbo-basic':   { label: 'Turbo Обычный',  tag: 'TURBO', desc: 'Быстрые ответы, DeepSeek V3. Идеально для задач разработки.' },
     'turbo-premium': { label: 'Turbo Премиум',  tag: 'PRO',   desc: 'Turbo + Claude Sonnet. Лучшее качество для сложных задач.' },
     'pro-basic':     { label: 'Pro Обычный',    tag: 'AGENT', desc: 'Агентный режим с инструментами. SSH, браузер, файлы.' },
@@ -31,6 +32,7 @@ const MODES = {
 
 /* ── MODE_INFO (УЛУЧ-3) ──────────────────────────────────── */
 const MODE_INFO = {
+    'auto':           { text: 'Автоматический выбор модели · По сложности задачи', icon: '🔮' },
     'turbo-basic':    { text: 'Быстрые ответы · DeepSeek V3 · Экономичный', icon: '⚡' },
     'turbo_basic':    { text: 'Быстрые ответы · DeepSeek V3 · Экономичный', icon: '⚡' },
     'turbo-premium':  { text: 'Sonnet общение · DeepSeek работа · Умный и дешёвый', icon: '✨' },
@@ -66,7 +68,7 @@ const state = {
     chats: [],
     currentChatId: null,
     messages: [],
-    mode: 'turbo-basic',
+    mode: 'auto',
     theme: 'light',
     isStreaming: false,
     streamController: null,
@@ -415,7 +417,7 @@ const UI = {
         // ПАТЧ W1-1: Восстановить режим из localStorage
         try {
             const savedMode = localStorage.getItem('orion_mode');
-            if (savedMode && ['turbo_basic', 'turbo_premium', 'pro_basic', 'pro_premium'].includes(savedMode)) {
+            if (savedMode && ['auto', 'turbo_basic', 'turbo-basic', 'turbo_premium', 'turbo-premium', 'pro_basic', 'pro-basic', 'pro_premium', 'pro-premium', 'architect'].includes(savedMode)) {
                 state.mode = savedMode;
             }
         } catch(e) {}
@@ -488,6 +490,7 @@ const UI = {
         this.showModeInfo(key);  // УЛУЧ-3: обновить инфо-бар при выборе
         // Improvement 3: Update model label on mode switch
         const MODEL_LABELS = {
+            'auto': 'Авто',
             'turbo-basic': 'DeepSeek V3',
             'turbo-premium': 'Claude Sonnet',
             'pro-basic': 'DeepSeek V3 + Sonnet',

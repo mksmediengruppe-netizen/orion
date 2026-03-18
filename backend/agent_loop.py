@@ -459,6 +459,28 @@ TOOLS_SCHEMA = [
     {
         "type": "function",
         "function": {
+            "name": "update_scratchpad",
+            "description": "Update your internal scratchpad with thoughts, plans, and progress notes. Use this to organize your thinking and track progress on complex tasks.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "content": {
+                        "type": "string",
+                        "description": "The thought, plan, or progress note to add to scratchpad"
+                    },
+                    "category": {
+                        "type": "string",
+                        "enum": ["plan", "thought", "progress", "error", "decision"],
+                        "description": "Category of the scratchpad entry"
+                    }
+                },
+                "required": ["content"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "browser_fill",
             "description": "Fill a form field on the current browser page. Use after browser_navigate. Selector is CSS (input[name=login], #password, textarea). Returns screenshot after fill.",
             "parameters": {
@@ -876,54 +898,47 @@ CMS (Битрикс/WordPress):
 # AGENT_SYSTEM_PROMPT_PRO - minimal prompt for smart models (Sonnet, Opus)
 AGENT_SYSTEM_PROMPT_PRO = """Ты — автономный AI агент ORION Digital.
 
-У тебя есть инструменты: ssh_execute, file_write, file_read, browser_navigate, browser_click, browser_fill, browser_submit, browser_screenshot, generate_image, create_artifact, generate_file, web_search, web_fetch, code_interpreter, analyze_image, ftp_upload, ftp_download, ftp_list, store_memory, recall_memory, task_complete.
+Инструменты: ssh_execute, file_write, file_read, 
+browser_navigate, browser_click, browser_fill, browser_submit,
+browser_check_site, browser_get_text, generate_image, create_artifact, 
+generate_file, web_search, web_fetch, ftp_upload, ftp_download,
+ftp_list, store_memory, recall_memory, update_scratchpad, task_complete.
 
-Пользователь дал задачу. Сделай её от начала до конца.
-Сначала подумай и составь план. Потом выполняй пошагово.
-Если способ не работает — попробуй другой.
-Проверь результат перед завершением.
-Не давай инструкции пользователю — делай сам.
+Правила:
+1. Получил задачу — сделай её от начала до конца.
+2. Сначала подумай и составь план.
+3. Действуй — не описывай. Не давай инструкции пользователю.
+4. Если способ не работает — попробуй другой. Минимум 3 попытки.
+5. Проверь результат: открой сайт, сделай скриншот, убедись.
+6. Для фото на сайтах — генерируй через generate_image.
+7. Завершай только когда ВСЁ сделано. Не пропускай шаги.
 
-Если задача связана с дизайном или созданием сайта:
-Используй Tailwind CSS (https://cdn.tailwindcss.com), 
-Google Fonts Inter (https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900),
-AOS анимации (https://unpkg.com/aos@2.3.1/dist/aos.css + https://unpkg.com/aos@2.3.1/dist/aos.js),
+Для дизайна сайтов:
+Используй Tailwind CSS (cdn.tailwindcss.com), Google Fonts Inter
+(https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900),
+AOS анимации (https://unpkg.com/aos@2.3.1/dist/aos.css + aos.js),
 Lucide иконки (https://unpkg.com/lucide@latest).
 Стиль: градиенты, тени shadow-2xl, hover эффекты, 
 скругления rounded-2xl, анимации, backdrop-blur.
 Минимум 500 строк HTML. Мобильная версия обязательна.
+
 Для изображений на сайте:
-1. Сначала создай полный HTML с placeholder картинками: 
+1. Сначала создай полный HTML с placeholder: 
    https://placehold.co/800x600/1a365d/ffffff?text=Photo
-2. Задеплой HTML на сервер — сайт должен работать с placeholder.
-3. После деплоя HTML — сгенерируй AI фото через generate_image 
-   для каждого placeholder. Промпт на АНГЛИЙСКОМ, детальный:
-   стиль, объект, освещение, настроение, 8k quality, professional photography.
-4. Загрузи сгенерированные фото на сервер через ssh_execute:
-   curl -sL -o /путь/image.jpg "https://orion.mksitdev.ru/api/files/FILE_ID/download"
-5. Замени placeholder на реальные пути к фото через file_write (обнови HTML).
-6. Если generate_image не сработал — ОСТАВЬ placeholder, НЕ ЛОМАЙ сайт.
-НЕ ИСПОЛЬЗУЙ file_write для бинарных файлов (картинок) — это сломает файл!
-После деплоя — сделай скриншот и оцени дизайн через Vision.
-Если оценка < 8/10 — улучши и повтори.
+2. После деплоя HTML — сгенерируй AI фото через generate_image 
+   для каждого placeholder. Промпт на английском, детальный:
+   стиль, объект, освещение, настроение, 8k quality.
+3. Загрузи сгенерированные фото на сервер через ssh_execute
+   (используй curl/wget чтобы скачать с ORION на целевой сервер)
+4. Замени placeholder на реальные пути к фото
+5. Если generate_image не сработал — оставь placeholder, не ломай сайт
 
-ВАЖНО — DNS после деплоя:
-После деплоя сайта ОБЯЗАТЕЛЬНО проверь DNS: выполни через ssh_execute команду 'dig +short ДОМЕН'.
-Если IP неправильный (не совпадает с сервером деплоя):
-1. Попробуй API хостинга (Beget API: https://api.beget.com/api/dns/changeRecords)
-2. Или зайди в панель хостинга через browser_navigate и измени A-запись
-3. Для Beget: browser_navigate на https://cp.beget.com/login, залогинься, найди DNS, смени A-запись
-НИКОГДА не говори пользователю 'измените DNS сами' — сделай это САМ.
-
-ВАЖНО — AI-фото на удалённом сервере:
-После generate_image файл сохраняется ЛОКАЛЬНО на ORION сервере.
-Чтобы передать картинку на удалённый сервер:
-1. Используй ssh_execute на удалённом сервере: wget или curl для скачивания
-2. Команда: ssh_execute с 'curl -o /путь/к/файлу.jpg "ORION_URL/api/files/FILE_ID/download"'
-3. Или: ssh_execute с 'wget -O /путь/к/файлу.jpg "ORION_URL/api/files/FILE_ID/download"'
-Где ORION_URL = https://orion.mksitdev.ru
-НЕ ИСПОЛЬЗУЙ file_write для бинарных файлов (картинок) — это сломает файл!
-"""
+После деплоя:
+1. Проверь DNS: ssh_execute 'dig +short домен'. 
+   Если IP неправильный — зайди в панель хостинга через 
+   browser_navigate и измени A-запись. Или используй API хостинга.
+2. Сделай скриншот сайта и оцени дизайн.
+3. Если оценка < 8/10 — улучши и повтори."""
 
 # Pro modes use minimal prompt
 PRO_MODES = {"pro_standard", "pro_premium", "architect"}
@@ -1274,7 +1289,7 @@ class AgentLoop:
             payload["tool_choice"] = "auto"
 
         resp = http_requests.post(
-            self.api_url, headers=headers, json=payload, timeout=120
+            self.api_url, headers=headers, json=payload, timeout=300
         )
 
         # Check for retryable HTTP errors
@@ -1931,6 +1946,18 @@ class AgentLoop:
                 except Exception as e:
                     return {"success": False, "error": f"Canvas creation error: {str(e)}"}
 
+            elif tool_name == "update_scratchpad":
+                content = args.get("content", "")
+                category = args.get("category", "thought")
+                if hasattr(self, 'scratchpad_add'):
+                    self.scratchpad_add(content, category)
+                return {"success": True, "message": f"Scratchpad updated: [{category}] {content[:100]}"}
+            elif tool_name == "update_scratchpad":
+                content = args.get("content", "")
+                category = args.get("category", "thought")
+                if hasattr(self, 'scratchpad_add'):
+                    self.scratchpad_add(content, category)
+                return {"success": True, "message": f"Scratchpad updated: [{category}] {content[:100]}"}
             elif tool_name == "task_complete":
                 summary = args.get("summary", "Task completed")
                 return {"success": True, "completed": True, "summary": summary}

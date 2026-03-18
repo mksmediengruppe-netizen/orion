@@ -1276,6 +1276,7 @@ def send_message(chat_id):
     # ── BUG-1 FIX: Extract and normalize orion_mode ──
     _raw_mode = data.get("mode", "turbo-basic")
     _MODE_NORMALIZE = {
+        "auto": "auto", 
         "turbo-basic": "turbo_standard", "turbo_basic": "turbo_standard", "turbo_standard": "turbo_standard",
         "turbo-premium": "turbo_premium", "turbo_premium": "turbo_premium",
         "pro-basic": "pro_standard", "pro_basic": "pro_standard", "pro_standard": "pro_standard",
@@ -1283,6 +1284,35 @@ def send_message(chat_id):
         "architect": "architect",
     }
     orion_mode = _MODE_NORMALIZE.get(_raw_mode, "turbo_standard")
+    
+    # ═══ АВТОРЕЖИМ: определяем модель по сложности сообщения ═══
+    _auto_resolved_mode = None
+    if orion_mode == "auto":
+        _msg_lower = user_message.lower()
+        _msg_len = len(user_message)
+        # Opus keywords — очень сложные задачи
+        _opus_kw = ["архитектур", "аудит", "спроектируй", "crm с нуля", "erp", 
+                     "микросервис", "рефакторинг всего", "code review всего проекта",
+                     "проанализируй весь код", "спроектируй систему"]
+        # Sonnet keywords — сложные задачи с деплоем/сайтами
+        _sonnet_kw = ["сделай сайт", "создай сайт", "лендинг", "деплой", "deploy",
+                      "сервер", "ssh", "ftp", "nginx", "docker", "создай приложение",
+                      "сделай приложение", "разверни", "настрой ssl", "certbot",
+                      "создай api", "rest api", "fullstack", "бэкенд", "backend",
+                      "dns", "домен", "хостинг", "beget", "vps", "сайт-визитк",
+                      "интернет-магазин", "портал", "дашборд", "dashboard"]
+        if any(kw in _msg_lower for kw in _opus_kw):
+            orion_mode = "architect"
+            _auto_resolved_mode = "architect"
+            logging.info(f"[AUTO MODE] → architect (Opus keywords detected)")
+        elif any(kw in _msg_lower for kw in _sonnet_kw) or _msg_len > 200:
+            orion_mode = "pro_standard"
+            _auto_resolved_mode = "pro_standard"
+            logging.info(f"[AUTO MODE] → pro_standard (Sonnet keywords or long message)")
+        else:
+            orion_mode = "turbo_standard"
+            _auto_resolved_mode = "turbo_standard"
+            logging.info(f"[AUTO MODE] → turbo_standard (simple message)")
     logging.info(f"[send_message] orion_mode={orion_mode} (raw={_raw_mode})")
 
     if not user_message and not file_content:
@@ -1486,6 +1516,89 @@ def send_message(chat_id):
     _ctx_limit_app = 50 if orion_mode in ("pro_standard", "pro_premium", "architect") else 10
     history = [{"role": m["role"], "content": m["content"]} for m in chat["messages"][-_ctx_limit_app:]]
 
+    # ═══ ФИНАЛЬНАЯ АРХИТЕКТУРА: Pro/Architect bypass — один агент, без pipeline ═══
+    if orion_mode in ("pro_standard", "pro_premium", "architect"):
+        if orion_mode == "architect":
+            _pro_agent_model = "anthropic/claude-opus-4"
+            _pro_model_name = "Claude Opus 4"
+        elif orion_mode == "pro_premium":
+            _pro_agent_model = "anthropic/claude-sonnet-4.6"
+            _pro_model_name = "Claude Sonnet 4.6"
+        else:
+            _pro_agent_model = "anthropic/claude-sonnet-4.6"
+            _pro_model_name = "Claude Sonnet 4.6"
+        
+        _pro_auto_prefix = ""
+        if _auto_resolved_mode:
+            _pro_auto_prefix = "Авто · "
+        
+        logging.info(f"[PRO BYPASS] mode={orion_mode} model={_pro_agent_model} — skipping pipeline/orchestrator")
+        
+        _pro_loop = AgentLoop(
+            model=_pro_agent_model,
+            api_key=OPENROUTER_API_KEY,
+            api_url=OPENROUTER_BASE_URL,
+            ssh_credentials=ssh_credentials,
+            user_id=request.user_id,
+        )
+        _pro_loop._chat_id = chat_id
+        _pro_loop._verify_enabled = data.get("verify", False)
+        _pro_loop.MAX_ITERATIONS = 30
+        _pro_loop.orion_mode = orion_mode
+        
+        # Register agent for stop functionality
+        with _agents_lock:
+            _active_agents[chat_id] = _pro_loop
+        
+        def _pro_generate():
+            full_response = ""
+            tokens_in = 0
+            tokens_out = 0
+            with _tasks_lock:
+                _running_tasks[chat_id] = {
+                    "status": "running", "events": [], "started_at": time.time(),
+                    "user_id": request.user_id, "message": user_message[:100],
+                }
+            # Send meta
+            yield f"data: {json.dumps({'type': 'meta', 'variant': variant, 'model': _pro_auto_prefix + _pro_model_name, 'enhanced': False, 'self_check_level': 'none', 'agent_mode': True, 'tier': 'pro', 'complexity': 'high'})}" + "\n\n"
+            
+            try:
+                for event in _pro_loop.run_stream(user_message, history, file_content):
+                    try:
+                        yield event
+                    except GeneratorExit:
+                        break
+                    try:
+                        event_data = json.loads(event.replace("data: ", "").strip())
+                        if event_data.get("type") == "content":
+                            full_response += event_data.get("text", "")
+                        if event_data.get("type") == "usage":
+                            tokens_in += event_data.get("prompt_tokens", 0)
+                            tokens_out += event_data.get("completion_tokens", 0)
+                    except:
+                        pass
+            except Exception as e:
+                logging.error(f"[PRO BYPASS] Error: {e}")
+                yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}" + "\n\n"
+            finally:
+                with _agents_lock:
+                    _active_agents.pop(chat_id, None)
+                with _tasks_lock:
+                    _running_tasks.pop(chat_id, None)
+                # Save response
+                if full_response:
+                    chat["messages"].append({"role": "assistant", "content": full_response, "created_at": _now_iso()})
+                    _save_db()
+                # Cost tracking
+                _cost = _calc_cost(tokens_in, tokens_out, _pro_agent_model)
+                chat["total_cost"] = chat.get("total_cost", 0) + _cost
+                _save_db()
+                yield f"data: {json.dumps({'type': 'done', 'cost': _cost})}" + "\n\n"
+        
+        return Response(stream_with_context(_pro_generate()), mimetype='text/event-stream',
+                       headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
+    
+    # ═══ TURBO: оркестратор + pipeline как раньше ═══
     def generate():
         nonlocal routed_model_name, model_name, agent_model_name
         full_response = ""
@@ -2281,6 +2394,7 @@ def direct_chat():
     # ── BUG-1 FIX: Extract and normalize orion_mode ──
     _raw_mode = data.get("mode", "turbo-basic")
     _MODE_NORMALIZE = {
+        "auto": "auto", 
         "turbo-basic": "turbo_standard", "turbo_basic": "turbo_standard", "turbo_standard": "turbo_standard",
         "turbo-premium": "turbo_premium", "turbo_premium": "turbo_premium",
         "pro-basic": "pro_standard", "pro_basic": "pro_standard", "pro_standard": "pro_standard",
@@ -2288,6 +2402,35 @@ def direct_chat():
         "architect": "architect",
     }
     orion_mode = _MODE_NORMALIZE.get(_raw_mode, "turbo_standard")
+    
+    # ═══ АВТОРЕЖИМ: определяем модель по сложности сообщения ═══
+    _auto_resolved_mode = None
+    if orion_mode == "auto":
+        _msg_lower = user_message.lower()
+        _msg_len = len(user_message)
+        # Opus keywords — очень сложные задачи
+        _opus_kw = ["архитектур", "аудит", "спроектируй", "crm с нуля", "erp", 
+                     "микросервис", "рефакторинг всего", "code review всего проекта",
+                     "проанализируй весь код", "спроектируй систему"]
+        # Sonnet keywords — сложные задачи с деплоем/сайтами
+        _sonnet_kw = ["сделай сайт", "создай сайт", "лендинг", "деплой", "deploy",
+                      "сервер", "ssh", "ftp", "nginx", "docker", "создай приложение",
+                      "сделай приложение", "разверни", "настрой ssl", "certbot",
+                      "создай api", "rest api", "fullstack", "бэкенд", "backend",
+                      "dns", "домен", "хостинг", "beget", "vps", "сайт-визитк",
+                      "интернет-магазин", "портал", "дашборд", "dashboard"]
+        if any(kw in _msg_lower for kw in _opus_kw):
+            orion_mode = "architect"
+            _auto_resolved_mode = "architect"
+            logging.info(f"[AUTO MODE] → architect (Opus keywords detected)")
+        elif any(kw in _msg_lower for kw in _sonnet_kw) or _msg_len > 200:
+            orion_mode = "pro_standard"
+            _auto_resolved_mode = "pro_standard"
+            logging.info(f"[AUTO MODE] → pro_standard (Sonnet keywords or long message)")
+        else:
+            orion_mode = "turbo_standard"
+            _auto_resolved_mode = "turbo_standard"
+            logging.info(f"[AUTO MODE] → turbo_standard (simple message)")
     logging.info(f"[send_message] orion_mode={orion_mode} (raw={_raw_mode})")
     chat_id = data.get("chat_id")
 
