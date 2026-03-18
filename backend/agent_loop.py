@@ -892,7 +892,18 @@ Lucide иконки (https://unpkg.com/lucide@latest).
 Стиль: градиенты, тени shadow-2xl, hover эффекты, 
 скругления rounded-2xl, анимации, backdrop-blur.
 Минимум 500 строк HTML. Мобильная версия обязательна.
-Для фото — генерируй через generate_image с детальным промптом.
+Для изображений на сайте:
+1. Сначала создай полный HTML с placeholder картинками: 
+   https://placehold.co/800x600/1a365d/ffffff?text=Photo
+2. Задеплой HTML на сервер — сайт должен работать с placeholder.
+3. После деплоя HTML — сгенерируй AI фото через generate_image 
+   для каждого placeholder. Промпт на АНГЛИЙСКОМ, детальный:
+   стиль, объект, освещение, настроение, 8k quality, professional photography.
+4. Загрузи сгенерированные фото на сервер через ssh_execute:
+   curl -sL -o /путь/image.jpg "https://orion.mksitdev.ru/api/files/FILE_ID/download"
+5. Замени placeholder на реальные пути к фото через file_write (обнови HTML).
+6. Если generate_image не сработал — ОСТАВЬ placeholder, НЕ ЛОМАЙ сайт.
+НЕ ИСПОЛЬЗУЙ file_write для бинарных файлов (картинок) — это сломает файл!
 После деплоя — сделай скриншот и оцени дизайн через Vision.
 Если оценка < 8/10 — улучши и повтори.
 
