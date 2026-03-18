@@ -1275,7 +1275,7 @@ class AgentLoop:
                 headers=headers,
                 json=payload,
                 stream=True,
-                timeout=120
+                timeout=(30, 120)
             )
 
             if resp.status_code in RETRYABLE_HTTP_CODES:
@@ -1372,7 +1372,7 @@ class AgentLoop:
                         _fb_payload["tools"] = tools
                         _fb_payload["tool_choice"] = "auto"
                     _fb_resp = http_requests.post(self.api_url, headers=headers,
-                                                  json=_fb_payload, stream=True, timeout=120)
+                                                  json=_fb_payload, stream=True, timeout=(30, 120))
                     _fb_resp.raise_for_status()
                     _fb_content = ""
                     for _fb_line in _fb_resp.iter_lines():
@@ -4168,6 +4168,8 @@ class MultiAgentLoop(AgentLoop):
                 iteration += 1
                 tool_calls_received = None
                 ai_text = ""
+                import logging as _pipe_log
+                _pipe_log.info(f"[Pipeline] Phase {phase_name} iteration {iteration}/{max_iterations}")
                 
                 try:
                     for event in self._call_ai_stream(messages, tools=TOOLS_SCHEMA):
