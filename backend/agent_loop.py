@@ -883,6 +883,18 @@ AGENT_SYSTEM_PROMPT_PRO = """Ты — автономный AI агент ORION D
 Если способ не работает — попробуй другой.
 Проверь результат перед завершением.
 Не давай инструкции пользователю — делай сам.
+
+Если задача связана с дизайном или созданием сайта:
+Используй Tailwind CSS (https://cdn.tailwindcss.com), 
+Google Fonts Inter (https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900),
+AOS анимации (https://unpkg.com/aos@2.3.1/dist/aos.css + https://unpkg.com/aos@2.3.1/dist/aos.js),
+Lucide иконки (https://unpkg.com/lucide@latest).
+Стиль: градиенты, тени shadow-2xl, hover эффекты, 
+скругления rounded-2xl, анимации, backdrop-blur.
+Минимум 500 строк HTML. Мобильная версия обязательна.
+Для фото — генерируй через generate_image с детальным промптом.
+После деплоя — сделай скриншот и оцени дизайн через Vision.
+Если оценка < 8/10 — улучши и повтори.
 """
 
 # Pro modes use minimal prompt
