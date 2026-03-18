@@ -18,7 +18,7 @@ logger = logging.getLogger("orchestrator")
 
 AGENTS_CAPABILITIES = """
 Доступные агенты:
-1. DESIGNER (Gemini) — HTML/CSS, лендинги, UI/UX, вёрстка, баннеры
+1. DESIGNER (Sonnet) — HTML/CSS, лендинги, UI/UX, вёрстка, баннеры
 2. DEVELOPER (DeepSeek) — Python, Node.js, PHP, API, базы данных, боты, скрипты
 3. DEVOPS (DeepSeek) — SSH, nginx, Docker, SSL, DNS, деплой, миграция серверов
 4. INTEGRATOR (DeepSeek) — Битрикс24, Telegram, платежи, n8n, вебхуки, CRM
@@ -38,7 +38,7 @@ PLANNER_SYSTEM_PROMPT = """Ты — проджект-менеджер AI-ком�
 
 ПРАВИЛА:
 1. Разбивай на фазы. Если агенты независимы — parallel: true.
-2. Designer ВСЕГДА для дизайна (model: gemini).
+2. Designer ВСЕГДА для дизайна (model: sonnet).
 3. После деплоя ВСЕГДА ставь Tester.
 4. Если нужны доступы — укажи в ask_user.
 5. Простая задача → mode: "single". Сложная → "multi_sequential" или "multi_parallel".
@@ -46,7 +46,7 @@ PLANNER_SYSTEM_PROMPT = """Ты — проджект-менеджер AI-ком�
 КОНТЕКСТ: {project_context}
 
 ОТВЕТ — строго JSON:
-{{"understanding":"что понял","mode":"single|multi_sequential|multi_parallel","ask_user":null,"phases":[{{"name":"Фаза","agents":["designer"],"parallel":false,"description":"Что делать","model":"gemini|deepseek|sonnet","requires_ssh":false,"expected_output":"html_file|code_file|deployed_site|report"}}],"primary_model":"gemini","primary_agent":"designer","requires_ssh":false,"requires_api_keys":[],"estimated_time":"2-5 мин","warnings":[]}}"""
+{{"understanding":"что понял","mode":"single|multi_sequential|multi_parallel","ask_user":null,"phases":[{{"name":"Фаза","agents":["designer"],"parallel":false,"description":"Что делать","model":"gemini|deepseek|sonnet","requires_ssh":false,"expected_output":"html_file|code_file|deployed_site|report"}}],"primary_model":"sonnet","primary_agent":"designer","requires_ssh":false,"requires_api_keys":[],"estimated_time":"2-5 мин","warnings":[]}}"""
 
 AGENT_PROMPTS = {
     "designer": """Ты — ведущий веб-дизайнер ORION Digital.
@@ -215,7 +215,7 @@ PROJECT_TEMPLATES = [
         "primary_model": "gemini",
         "mode": "multi_sequential",
         "phases": [
-            {"name": "Дизайн", "agents": ["designer"], "model": "gemini", "description": "HTML/CSS магазина"},
+            {"name": "Дизайн", "agents": ["designer"], "model": "sonnet", "description": "HTML/CSS магазина"},
             {"name": "Бэкенд", "agents": ["developer"], "model": "deepseek", "description": "API, корзина, заказы"},
             {"name": "Деплой", "agents": ["devops"], "model": "deepseek", "description": "Деплой на сервер"},
             {"name": "SEO", "agents": ["copywriter"], "model": "sonnet", "description": "Мета-теги, тексты, sitemap"},
@@ -231,7 +231,7 @@ PROJECT_TEMPLATES = [
         "primary_model": "gemini",
         "mode": "multi_sequential",
         "phases": [
-            {"name": "Дизайн", "agents": ["designer"], "model": "gemini", "description": "HTML/CSS сайта"},
+            {"name": "Дизайн", "agents": ["designer"], "model": "sonnet", "description": "HTML/CSS сайта"},
             {"name": "SEO", "agents": ["copywriter"], "model": "sonnet", "description": "Мета-теги, тексты, sitemap"}
         ]
     },
@@ -244,7 +244,7 @@ PROJECT_TEMPLATES = [
         "primary_model": "gemini",
         "mode": "multi_sequential",
         "phases": [
-            {"name": "Лендинг", "agents": ["designer"], "model": "gemini", "description": "HTML лендинг с формой"},
+            {"name": "Лендинг", "agents": ["designer"], "model": "sonnet", "description": "HTML лендинг с формой"},
             {"name": "Интеграция", "agents": ["integrator"], "model": "deepseek", "description": "Битрикс24 вебхук"}
         ]
     },
@@ -269,7 +269,7 @@ PROJECT_TEMPLATES = [
         "primary_model": "gemini",
         "mode": "multi_sequential",
         "phases": [
-            {"name": "Дизайн", "agents": ["designer"], "model": "gemini", "description": "UI дашборда с Chart.js"},
+            {"name": "Дизайн", "agents": ["designer"], "model": "sonnet", "description": "UI дашборда с Chart.js"},
             {"name": "Данные", "agents": ["developer"], "model": "deepseek", "description": "Парсинг CSV/Excel"}
         ]
     },
@@ -282,7 +282,7 @@ PROJECT_TEMPLATES = [
         "primary_model": "deepseek",
         "mode": "multi_sequential",
         "phases": [
-            {"name": "Форма", "agents": ["designer"], "model": "gemini", "description": "HTML форма заявки"},
+            {"name": "Форма", "agents": ["designer"], "model": "sonnet", "description": "HTML форма заявки"},
             {"name": "Автоматизация", "agents": ["integrator"], "model": "deepseek", "description": "n8n workflow"}
         ]
     }
@@ -317,12 +317,12 @@ class Orchestrator:
         if self._is_obvious_design(msg):
             return {"mode":"single","phases":[{"name":"Дизайн","agents":["designer"],"model":"gemini",
                     "description":"Создать HTML/CSS","expected_output":"html_file"}],
-                    "primary_model":"gemini","primary_agent":"designer","understanding":"Создание веб-страницы","ask_user":None}
+                    "primary_model":"sonnet","primary_agent":"designer","understanding":"Создание веб-страницы","ask_user":None}
 
         if self._is_image_request(msg):
             return {"mode":"single","phases":[{"name":"Генерация","agents":["designer"],
                     "model":"gemini","description":"Создать изображение"}],
-                    "primary_model":"gemini","primary_agent":"designer",
+                    "primary_model":"sonnet","primary_agent":"designer",
                     "understanding":"Генерация изображения","ask_user":None}
 
         if self._is_obvious_code(msg):
@@ -535,7 +535,7 @@ def get_agent_prompt(key):
     return AGENT_PROMPTS.get(key, AGENT_PROMPTS["developer"])
 
 def get_model_for_agent(agent_key, orion_mode="turbo_standard", task_hint=""):
-    if agent_key=="designer": return MODEL_MAP["gemini"]
+    if agent_key=="designer": return MODEL_MAP["sonnet"]  # Sonnet делает красивый HTML/CSS
     if agent_key=="copywriter": return MODEL_MAP["sonnet"]  # ПАТЧ W2-3
     if agent_key=="analyst" and "pro" in orion_mode and "premium" in orion_mode: return MODEL_MAP["sonnet"]
     if agent_key=="architect" or (agent_key=="analyst" and orion_mode=="architect"): return MODEL_MAP["opus"]

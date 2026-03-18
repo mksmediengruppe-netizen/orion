@@ -4122,6 +4122,16 @@ class MultiAgentLoop(AgentLoop):
                 "role": agent_key
             })
             
+            # Switch model for this phase agent
+            try:
+                from orchestrator_v2 import get_model_for_agent
+                _phase_model = get_model_for_agent(agent_key, getattr(self, '_orion_mode', 'turbo_standard'))
+                _old_model = self.model
+                self.model = _phase_model
+                _plog.info(f"[Pipeline] Phase model: {agent_key} → {_phase_model}")
+            except Exception as _me:
+                _plog.warning(f"[Pipeline] Could not switch model for {agent_key}: {_me}")
+            
             # Build phase prompt
             phase_prompt = f"""ТЕКУЩАЯ ФАЗА ({idx+1}/{total_phases}): {phase_name}
 
