@@ -1232,7 +1232,7 @@ class AgentLoop:
                 "max_tokens": 2000,
                 "stream": False,
             }
-            resp = http_requests.post(self.api_url, headers=headers, json=payload, timeout=30)
+            resp = http_requests.post(self.api_url, headers=headers, json=payload, timeout=(30, 120))
             if resp.status_code == 200:
                 data = resp.json()
                 return data.get("choices", [{}])[0].get("message", {}).get("content", "")
