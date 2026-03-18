@@ -324,6 +324,17 @@ const Auth = {
                 console.log('BUG-12v2: Restored', state.chats.length, 'chats from cache');
             } catch(e) {}
         }
+        // BUG-12v3: Always restore chats from cache immediately (before API)
+        const cachedChatsInit = localStorage.getItem('orion_chats_cache');
+        if (cachedChatsInit) {
+            try {
+                const parsed = JSON.parse(cachedChatsInit);
+                if (parsed && parsed.length) {
+                    state.chats = parsed;
+                    console.log('BUG-12v3: Pre-loaded', state.chats.length, 'chats from cache');
+                }
+            } catch(e) {}
+        }
         UI.init();
         ChatList.load();
         UI.updateUserInfo();
@@ -368,9 +379,14 @@ const Auth = {
         if (state.chats.length) {
             localStorage.setItem('orion_chats_cache', JSON.stringify(state.chats));
         }
+        // BUG-12v3: Always cache chats before clearing
+        if (state.chats && state.chats.length) {
+            try { localStorage.setItem('orion_chats_cache', JSON.stringify(state.chats)); } catch(e) {}
+        }
         state.token = null;
         state.user = null;
-        state.chats = [];
+        // BUG-12v3: Do NOT clear chats — they will be restored from cache
+        // state.chats = [];  
         state.currentChatId = null;
         state.messages = [];
         localStorage.removeItem('orion_token');
@@ -883,7 +899,29 @@ const ChatList = {
             const data = await API.get('/chats');
             // Normalize: backend may return [{chat: {...}}, ...] or [{id, ...}, ...]
             const rawChats = data.chats || data || [];
-            state.chats = rawChats.map(c => c.chat || c);
+            const newChats = rawChats.map(c => c.chat || c);
+            // BUG-12v3: If API returned empty but we have cached chats, keep cache
+            if (newChats.length === 0 && state.chats.length > 0) {
+                console.log('BUG-12v3: API returned 0 chats but we have', state.chats.length, 'in state — keeping');
+            } else if (newChats.length === 0) {
+                // Try restore from localStorage cache
+                const cached = localStorage.getItem('orion_chats_cache');
+                if (cached) {
+                    try {
+                        const parsedCache = JSON.parse(cached);
+                        if (parsedCache && parsedCache.length) {
+                            state.chats = parsedCache;
+                            console.log('BUG-12v3: Restored', state.chats.length, 'chats from cache (API empty)');
+                        } else {
+                            state.chats = newChats;
+                        }
+                    } catch(e) { state.chats = newChats; }
+                } else {
+                    state.chats = newChats;
+                }
+            } else {
+                state.chats = newChats;
+            }
             // BUG-12v2: Cache chats in localStorage for resilience
             if (state.chats.length) {
                 try { localStorage.setItem('orion_chats_cache', JSON.stringify(state.chats)); } catch(e) {}
