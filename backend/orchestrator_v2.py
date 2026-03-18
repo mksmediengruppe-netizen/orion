@@ -97,21 +97,34 @@ AGENT_PROMPTS = {
 ПРАВИЛА DNS:
 ПОСЛЕ ДЕПЛОЯ — ОБЯЗАТЕЛЬНО ПРОВЕРЬ И НАСТРОЙ DNS:
 1. Проверь: dig +short ДОМЕН (или nslookup ДОМЕН)
-2. Если IP не совпадает с сервером — НЕМЕДЛЕННО ИСПРАВЬ:
-   ШАГ A: Попробуй Beget API:
-     curl "https://api.beget.com/api/dns/changeRecords?login=LOGIN&passwd=PASSWORD&input_format=json&output_format=json&input_data={\"fqdn\":\"ДОМЕН\",\"records\":{\"A\":[{\"ttl\":60,\"value\":\"IP_СЕРВЕРА\"}]}}"
-     Замени LOGIN, PASSWORD, ДОМЕН, IP_СЕРВЕРА на реальные значения из задачи.
-   ШАГ B: Если API не сработал — зайди в панель Beget через браузер:
-     1. browser_navigate → https://cp.beget.com
-     2. Введи логин и пароль (которые есть в задаче или спроси через ask_user)
-     3. Перейди в раздел "Домены" → выбери домен → "DNS записи"
-     4. Найди A-запись → измени IP на IP сервера → сохрани
-     5. Подожди 2 минуты → снова проверь: dig +short ДОМЕН
-   ШАГ C: Если не можешь зайти в панель:
-     - Сообщи пользователю: "Не удалось автоматически изменить DNS. Создайте A-запись: ДОМЕН → IP_СЕРВЕРА"
-     - Предложи использовать сайт по IP: http://IP_СЕРВЕРА
+2. Если IP не совпадает с сервером — НЕМЕДЛЕННО ИСПРАВЬ через Beget API:
+
+BEGET API (ИСПОЛЬЗУЙ В ПЕРВУЮ ОЧЕРЕДЬ):
+Для изменения A-записи используй Python код:
+```python
+import requests, json, urllib.parse
+login = "BEGET_LOGIN"  # логин из задачи
+passwd = "BEGET_PASSWORD"  # пароль из задачи
+fqdn = "ДОМЕН"  # например asmksm58.beget.tech
+server_ip = "IP_СЕРВЕРА"  # например 45.67.57.175
+records = {"A": [{"priority": 10, "value": server_ip}]}
+input_data = json.dumps({"fqdn": fqdn, "records": records})
+url = f"https://api.beget.com/api/dns/changeRecords?login={login}&passwd={urllib.parse.quote(passwd)}&input_format=json&output_format=json&input_data={urllib.parse.quote(input_data)}"
+resp = requests.get(url, verify=False, timeout=30)
+print("Beget API response:", resp.text)
+```
+Сохрани этот код в файл и выполни через ssh_execute или локально через python_execute.
+Если ответ "true" — DNS изменён успешно.
+
+РЕЗЕРВНЫЙ СПОСОБ (если API не работает):
+   1. browser_navigate → https://cp.beget.com
+   2. Войди с логином и паролем из задачи
+   3. Перейди: Домены → DNS → выбери домен → A-запись → измени IP → сохрани
+   4. Подожди 2 минуты → проверь: dig +short ДОМЕН
+
 3. НИКОГДА не говори "измените DNS сами" без попытки сделать это автоматически.
-4. НИКОГДА не заканчивай работу если домен не работает — сначала попробуй исправить.""",
+4. НИКОГДА не заканчивай работу если домен не работает — сначала попробуй исправить.
+5. После изменения DNS — подожди 60 секунд и проверь снова.""",
 
     "integrator": """Ты — специалист по интеграциям ORION Digital.
 
