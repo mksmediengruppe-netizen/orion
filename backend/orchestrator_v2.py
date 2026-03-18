@@ -252,6 +252,10 @@ class Orchestrator:
         if template_plan:
             return template_plan
 
+        # BUGFIX: Серверные задачи (деплой, SSH, FTP, сайт-визитка) — всегда через LLM planner
+        if self._needs_sonnet(msg) or self._is_full_site_task(msg):
+            return self._llm_plan(message, chat_history, has_ssh, ssh_info)
+
         if self._is_obvious_design(msg):
             return {"mode":"single","phases":[{"name":"Дизайн","agents":["designer"],"model":"gemini",
                     "description":"Создать HTML/CSS","expected_output":"html_file"}],
@@ -353,6 +357,19 @@ class Orchestrator:
     def _is_image_request(self, msg):
         return any(w in msg for w in ["картинк","изображен","нарисуй","фото ",
                    "баннер","иллюстрац","иконк","лого","постер"])
+
+    def _is_full_site_task(self, msg):
+        """Задача на создание полноценного сайта (не просто дизайн)?"""
+        site_words = ["сайт-визитк", "сайт визитк", "сайт под ключ", "создай сайт",
+                      "сделай сайт", "нужен сайт", "разработай сайт",
+                      "многостраничный", "корпоративный", "портфолио сайт"]
+        has_site = any(w in msg for w in site_words)
+        has_server = any(w in msg for w in ["ssh", "ftp", "ip ", "сервер", "домен",
+                                             "beget", "хостинг", "nginx", "ssl"])
+        has_structure = any(w in msg for w in ["структур", "секци", "страниц",
+                                               "контакт", "услуг", "портфолио"])
+        # Если есть упоминание сайта + (сервер ИЛИ структура) → это полная задача
+        return has_site and (has_server or has_structure)
 
     def _is_obvious_code(self, msg):
         code = any(re.search(w,msg) for w in ["скрипт","функци","парсер","бот.*telegram","cli","утилит"])

@@ -251,6 +251,40 @@ SPECIALIZED_AGENTS = {
 - Валидируй входные/выходные данные
 - Храни секреты в env variables, не в коде
 - Документируй API endpoints и payload formats"""
+    },
+    # ПАТЧ W2-3: Copywriter + SEO агент
+    "copywriter": {
+        "name": "Копирайтер",
+        "emoji": "✍️",
+        "role": "copywriter",
+        "preferred_model": "anthropic/claude-sonnet-4.6",
+        "model_key": "sonnet",
+        "priority_tools": [
+            "file_write", "file_read", "browser_get_text",
+            "web_search", "generate_file", "ssh_execute"
+        ],
+        "prompt_suffix": """Ты — SEO-копирайтер и контент-стратег.
+
+ЭКСПЕРТИЗА:
+- SEO-оптимизация: мета-теги, title, description, Open Graph
+- Контент-стратегия: тексты для лендингов, карточек товаров, блогов
+- Технический SEO: sitemap.xml, robots.txt, structured data (JSON-LD)
+- Alt-тексты для изображений
+- Анализ конкурентов и ключевых слов
+
+ИНСТРУМЕНТЫ:
+1. browser_get_text — прочитать текущий контент сайта
+2. file_write — создать/обновить файлы на сервере
+3. ssh_execute — загрузить файлы, проверить структуру сайта
+4. web_search — анализ конкурентов, подбор ключевых слов
+5. generate_file — создать документ с текстами
+
+ПРАВИЛА:
+- Каждый текст оптимизирован под 2-3 ключевые фразы
+- Title: 50-60 символов, ключевое слово в начале
+- Description: 150-160 символов, призыв к действию
+- Alt: описательный, с ключевым словом, 5-15 слов
+- СОЗДАВАЙ файлы через file_write, НЕ ОПИСЫВАЙ что нужно сделать"""
     }
 }
 
@@ -354,39 +388,8 @@ AGENT_SELECTION_RULES = {
             r"(отправ|получ).*(webhook|api|запрос)",
         ]
     },
-    # ПАТЧ W2-3: Copywriter + SEO агент
+    # ПАТЧ W2-3: Copywriter + SEO агент (только keywords + patterns)
     "copywriter": {
-        "name": "Копирайтер",
-        "emoji": "✍️",
-        "role": "copywriter",
-        "preferred_model": "anthropic/claude-sonnet-4.6",
-        "model_key": "sonnet",
-        "priority_tools": [
-            "file_write", "file_read", "browser_get_text",
-            "web_search", "generate_file", "ssh_execute"
-        ],
-        "prompt_suffix": """Ты — SEO-копирайтер и контент-стратег.
-
-ЭКСПЕРТИЗА:
-- SEO-оптимизация: мета-теги, title, description, Open Graph
-- Контент-стратегия: тексты для лендингов, карточек товаров, блогов
-- Технический SEO: sitemap.xml, robots.txt, structured data (JSON-LD)
-- Alt-тексты для изображений
-- Анализ конкурентов и ключевых слов
-
-ИНСТРУМЕНТЫ:
-1. browser_get_text — прочитать текущий контент сайта
-2. file_write — создать/обновить файлы на сервере
-3. ssh_execute — загрузить файлы, проверить структуру сайта
-4. web_search — анализ конкурентов, подбор ключевых слов
-5. generate_file — создать документ с текстами
-
-ПРАВИЛА:
-- Каждый текст оптимизирован под 2-3 ключевые фразы
-- Title: 50-60 символов, ключевое слово в начале
-- Description: 150-160 символов, призыв к действию
-- Alt: описательный, с ключевым словом, 5-15 слов
-- СОЗДАВАЙ файлы через file_write, НЕ ОПИСЫВАЙ что нужно сделать""",
         "keywords": [
             "seo", "мета-тег", "meta", "title", "description", "og:",
             "sitemap", "robots.txt", "копирайт", "текст для сайта",

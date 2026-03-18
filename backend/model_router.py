@@ -86,6 +86,7 @@ MODES = {
             "integrator":       "deepseek",
             "tester":           "deepseek",
             "analyst":          "deepseek",
+            "copywriter":       "deepseek",
             "code_reviewer":    None          # нет в Turbo
         }
     },
@@ -102,6 +103,7 @@ MODES = {
             "integrator":       "deepseek",
             "tester":           "deepseek",
             "analyst":          "deepseek",
+            "copywriter":       "deepseek",
             "code_reviewer":    None
         }
     },
@@ -118,6 +120,7 @@ MODES = {
             "integrator":       "deepseek",
             "tester":           "deepseek",
             "analyst":          "deepseek",
+            "copywriter":       "sonnet",    # SEO копирайтинг
             "code_reviewer":    "sonnet"     # Pro code review
         }
     },
@@ -134,6 +137,7 @@ MODES = {
             "integrator":       "deepseek",
             "tester":           "deepseek",
             "analyst":          "sonnet",    # Глубокий анализ
+            "copywriter":       "sonnet",
             "code_reviewer":    "sonnet"
         }
     },
@@ -150,6 +154,7 @@ MODES = {
             "integrator":       "deepseek",
             "tester":           "deepseek",
             "analyst":          "opus",
+            "copywriter":       "sonnet",
             "code_reviewer":    "opus"
         }
     }

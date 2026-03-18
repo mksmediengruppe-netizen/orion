@@ -1275,7 +1275,7 @@ class AgentLoop:
                 headers=headers,
                 json=payload,
                 stream=True,
-                timeout=30
+                timeout=120
             )
 
             if resp.status_code in RETRYABLE_HTTP_CODES:
@@ -4056,6 +4056,208 @@ class MultiAgentLoop(AgentLoop):
 Если есть проблемы — исправь их."""
         }
     }
+
+    def run_stream(self, user_message, chat_history=None, file_content=None, ssh_credentials=None):
+        """Override run_stream to handle orchestrator sequential pipeline."""
+        import logging
+        _mlog = logging.getLogger('agent_loop')
+        _mlog.info(f'[MULTI] run_stream CALLED, class={self.__class__.__name__}')
+        if ssh_credentials:
+            self.ssh_credentials = ssh_credentials
+        
+        plan = getattr(self, '_orchestrator_plan', None)
+        _mlog.info(f'[MULTI] plan exists={plan is not None}, mode={plan.get("mode") if plan else None}, phases={len(plan.get("phases",[])) if plan else 0}')
+        if plan and plan.get('mode') == 'multi_sequential' and plan.get('phases'):
+            _mlog.info(f'[MULTI] STARTING sequential pipeline with {len(plan["phases"])} phases')
+            yield from self._run_sequential_pipeline(user_message, chat_history, file_content, plan)
+        else:
+            # Fallback to parent AgentLoop.run_stream
+            yield from super().run_stream(user_message, chat_history, file_content, ssh_credentials)
+
+    def _run_sequential_pipeline(self, user_message, chat_history, file_content, plan):
+        """Execute orchestrator phases sequentially, each as a separate agent loop."""
+        import json as _json
+        import logging as _plog
+        _plog.info(f"[Pipeline] _run_sequential_pipeline ENTERED with {len(plan.get('phases', []))} phases")
+        phases = plan.get('phases', [])
+        total_phases = len(phases)
+        
+        # Send plan to frontend
+        yield self._sse({
+            "type": "task_steps",
+            "steps": [{"name": p["name"], "agent": p.get("agents", ["developer"])[0], "status": "pending"} for p in phases],
+            "total": total_phases
+        })
+        
+        context = user_message
+        if file_content:
+            context = f"{file_content}\n\n---\n\nЗадача:\n{user_message}"
+        if self.ssh_credentials.get('host'):
+            context += f"\n\n[Сервер: {self.ssh_credentials['host']}, user: {self.ssh_credentials.get('username', 'root')}]"
+        
+        phase_results = {}
+        
+        for idx, phase in enumerate(phases):
+            if self._stop_requested:
+                yield self._sse({"type": "stopped", "text": "Остановлено пользователем"})
+                return
+            
+            phase_name = phase.get('name', f'Phase {idx+1}')
+            phase_agents = phase.get('agents', ['developer'])
+            phase_desc = phase.get('description', '')
+            agent_key = phase_agents[0] if phase_agents else 'developer'
+            _plog.info(f"[Pipeline] Starting phase {idx+1}/{total_phases}: {phase_name} (agent: {agent_key})")
+            
+            # Notify frontend
+            yield self._sse({
+                "type": "step_update",
+                "step_index": idx,
+                "status": "running",
+                "name": phase_name
+            })
+            yield self._sse({
+                "type": "agent_start",
+                "agent": phase_name,
+                "emoji": self._agent_emoji(agent_key),
+                "role": agent_key
+            })
+            
+            # Build phase prompt
+            phase_prompt = f"""ТЕКУЩАЯ ФАЗА ({idx+1}/{total_phases}): {phase_name}
+
+ОПИСАНИЕ ФАЗЫ: {phase_desc}
+
+ОРИГИНАЛЬНАЯ ЗАДАЧА: {context}"""
+            
+            if phase_results:
+                prev = "\n\n".join([f"=== {k} ===\n{v[:2000]}" for k, v in phase_results.items()])
+                phase_prompt += f"\n\nРЕЗУЛЬТАТЫ ПРЕДЫДУЩИХ ФАЗ:\n{prev}"
+            
+            phase_prompt += f"""\n\nВАЖНО:
+- Ты выполняешь ТОЛЬКО эту фазу: {phase_name}
+- Используй инструменты (ssh_execute, file_write, browser_navigate и т.д.) для РЕАЛЬНОГО выполнения
+- Не просто описывай что нужно сделать — ДЕЛАЙ
+- Когда фаза выполнена — вызови task_complete"""
+            
+            # Get agent-specific prompt
+            agent_prompt_extra = ""
+            try:
+                from orchestrator_v2 import AGENT_PROMPTS
+                agent_prompt_extra = AGENT_PROMPTS.get(agent_key, "")
+            except:
+                pass
+            
+            # Build messages for this phase
+            system_prompt = AGENT_SYSTEM_PROMPT
+            if agent_prompt_extra:
+                system_prompt += "\n\n" + agent_prompt_extra
+            if hasattr(self, '_orchestrator_prompt') and self._orchestrator_prompt:
+                system_prompt += "\n\n" + self._orchestrator_prompt
+            
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": phase_prompt}
+            ]
+            
+            # Run agent loop for this phase
+            phase_text = ""
+            iteration = 0
+            max_iterations = 20
+            
+            while iteration < max_iterations and not self._stop_requested:
+                iteration += 1
+                tool_calls_received = None
+                ai_text = ""
+                
+                try:
+                    for event in self._call_ai_stream(messages, tools=TOOLS_SCHEMA):
+                        if event["type"] == "text_delta":
+                            ai_text += event["text"]
+                            phase_text += event["text"]
+                            yield self._sse({"type": "content", "text": event["text"], "agent": phase_name})
+                        elif event["type"] == "tool_calls":
+                            tool_calls_received = event["tool_calls"]
+                except Exception as e:
+                    logging.error(f"[Pipeline] Phase {phase_name} AI call error: {e}")
+                    yield self._sse({"type": "error", "text": f"Ошибка в фазе {phase_name}: {str(e)}"})
+                    break
+                
+                if ai_text:
+                    messages.append({"role": "assistant", "content": ai_text})
+                
+                if not tool_calls_received:
+                    break
+                
+                # Process tool calls — BUG-9 FIX: tool_calls from _call_ai_stream already have OpenAI format
+                # Format: {"id": ..., "type": "function", "function": {"name": ..., "arguments": "..."}}
+                messages.append({"role": "assistant", "content": ai_text, "tool_calls": tool_calls_received})
+                
+                for tc in tool_calls_received:
+                    tool_name = tc["function"]["name"]
+                    tool_args_str = tc["function"].get("arguments", "{}")
+                    try:
+                        tool_args = _json.loads(tool_args_str) if isinstance(tool_args_str, str) else tool_args_str
+                    except _json.JSONDecodeError:
+                        tool_args = {}
+                    tool_id = tc["id"]
+                    
+                    # Check for task_complete
+                    if tool_name == "task_complete":
+                        phase_text += "\n[ФАЗА ЗАВЕРШЕНА]"
+                        yield self._sse({"type": "tool_start", "tool": "task_complete", "args": tool_args})
+                        messages.append({"role": "tool", "tool_call_id": tool_id, "content": "Phase completed"})
+                        tool_calls_received = None
+                        break
+                    
+                    _display_args = {k: str(v)[:100] for k, v in tool_args.items()} if isinstance(tool_args, dict) else {}
+                    yield self._sse({"type": "tool_start", "tool": tool_name, "args": _display_args})
+                    
+                    try:
+                        result = self._execute_tool(tool_name, tool_args)
+                    except Exception as e:
+                        result = {"error": str(e)}
+                    
+                    result_preview = self._preview_result(tool_name, result)
+                    yield self._sse({"type": "tool_result", "tool": tool_name, "result": result_preview})
+                    
+                    result_str = _json.dumps(result, ensure_ascii=False)
+                    if len(result_str) > self.MAX_TOOL_OUTPUT:
+                        result_str = result_str[:self.MAX_TOOL_OUTPUT] + "..."
+                    
+                    messages.append({"role": "tool", "tool_call_id": tool_id, "content": result_str})
+                
+                if tool_calls_received is None:
+                    break  # task_complete was called
+            
+            phase_results[phase_name] = phase_text[:3000]
+            
+            yield self._sse({
+                "type": "step_update",
+                "step_index": idx,
+                "status": "done",
+                "name": phase_name
+            })
+            yield self._sse({
+                "type": "agent_complete",
+                "agent": phase_name,
+                "role": agent_key
+            })
+        
+        # All phases complete
+        yield self._sse({
+            "type": "task_complete",
+            "text": f"Все {total_phases} фаз выполнены.",
+            "phases_completed": total_phases
+        })
+    
+    def _agent_emoji(self, agent_key):
+        """Get emoji for agent type."""
+        emojis = {
+            'devops': '🔧', 'designer': '🎨', 'developer': '💻',
+            'tester': '🧪', 'analyst': '📊', 'copywriter': '✍️',
+            'architect': '🏗️'
+        }
+        return emojis.get(agent_key, '🤖')
 
     def run_multi_agent_stream(self, user_message, chat_history=None, file_content=None):
         """Run multi-agent pipeline with streaming."""

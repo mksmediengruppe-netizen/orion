@@ -1557,6 +1557,9 @@ def send_message(chat_id):
             )
             agent._chat_id = chat_id  # BUG-5 FIX
             agent._verify_enabled = data.get("verify", False)  # ПАТЧ 7
+            # BUG-8 FIX: Pass orchestrator plan to agent
+            if _orch_plan_send:
+                agent._orchestrator_plan = _orch_plan_send
 
             with _agents_lock:
                 _active_agents[chat_id] = agent
@@ -1618,6 +1621,15 @@ def send_message(chat_id):
                     api_url=OPENROUTER_BASE_URL,
                     ssh_credentials=ssh_credentials
                 )
+            elif _orch_plan_send and _orch_plan_send.get("mode") == "multi_sequential":
+                # BUG-8 FIX: Orchestrator requested multi_sequential → use MultiAgentLoop
+                agent = MultiAgentLoop(
+                    model=agent_model,
+                    api_key=OPENROUTER_API_KEY,
+                    api_url=OPENROUTER_BASE_URL,
+                    ssh_credentials=ssh_credentials
+                )
+                logging.info(f"[send_message] BUG-8 FIX: Using MultiAgentLoop for multi_sequential plan")
             else:
                 # Single agent loop
                 # === МАРШРУТИЗАЦИЯ МОДЕЛИ (ПАТЧ A3) ===
@@ -1653,6 +1665,10 @@ def send_message(chat_id):
                 )
                 agent._chat_id = chat_id  # BUG-5 FIX: передаём chat_id
 
+            # BUG-8 FIX 2: Pass orchestrator plan to SSH agent
+            if _orch_plan_send:
+                agent._orchestrator_plan = _orch_plan_send
+                logging.info(f"[send_message] BUG-8: Passed orch plan to SSH agent")
             # Register agent for stop functionality
             with _agents_lock:
                 _active_agents[chat_id] = agent
