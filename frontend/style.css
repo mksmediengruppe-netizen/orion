@@ -3725,3 +3725,59 @@ img { max-width: 100%; display: block; }
     border-color: var(--border, #333);
     color: var(--text-primary, #e0e0e0);
 }
+
+/* ── Browser Takeover Card ─────────────────────────────────── */
+.browser-takeover-card {
+    background: var(--card-bg, #1e1e2e);
+    border: 2px solid #f59e0b;
+    border-radius: 12px;
+    padding: 16px;
+    margin: 12px 0;
+    animation: slideIn 0.3s ease;
+}
+.takeover-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 12px;
+}
+.takeover-title {
+    font-weight: 600;
+    font-size: 15px;
+    color: #f59e0b;
+}
+.takeover-url {
+    font-size: 12px;
+    color: var(--text-secondary, #888);
+    margin-bottom: 8px;
+    word-break: break-all;
+}
+.takeover-instruction {
+    background: rgba(245, 158, 11, 0.1);
+    border-left: 3px solid #f59e0b;
+    padding: 10px 14px;
+    border-radius: 0 8px 8px 0;
+    margin-bottom: 12px;
+    font-size: 14px;
+    line-height: 1.5;
+}
+.takeover-screenshot img {
+    max-height: 400px;
+    object-fit: contain;
+}
+.takeover-field {
+    margin-bottom: 8px;
+}
+.takeover-actions {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+    margin-top: 12px;
+}
+.takeover-done {
+    background: #10b981 !important;
+    border-color: #10b981 !important;
+}
+.takeover-done:hover {
+    background: #059669 !important;
+}

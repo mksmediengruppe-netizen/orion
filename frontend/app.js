@@ -1771,6 +1771,10 @@ const Chat = {
                 // ПАТЧ ЗАДАЧА-1: browser_ask_auth — безопасная авторизация
                 AuthForm.show(evt);
                 break;
+            case 'browser_takeover':
+                // ПАТЧ: browser_ask_user — передача управления пользователю
+                BrowserTakeover.show(evt);
+                break;
 
             case 'thinking_start':
                 ActivityPanel.addLine('thinking', '🧠', 'Анализирую задачу...');
@@ -1821,6 +1825,10 @@ const Chat = {
             browser_navigate: '🌐', browser_get_text: '🌐', browser_check_site: '🌐',
             browser_check_api: '🌐', browser_click: '👆', browser_fill: '✍️',
             browser_submit: '📨', browser_select: '📋', browser_ask_auth: '🔐',
+            browser_type: '⌨️', browser_js: '💻', browser_press_key: '⏎',
+            browser_scroll: '📜', browser_hover: '🖱️', browser_wait: '⏳',
+            browser_elements: '🔍', browser_screenshot: '📸', browser_page_info: 'ℹ️',
+            smart_login: '🔑', browser_ask_user: '🙋', browser_takeover_done: '✅',
             ftp_upload: '📤', ftp_download: '📥', ftp_list: '📂',
             web_search: '🔍', web_fetch: '🔍',
             code_interpreter: '💻', generate_file: '📄', generate_image: '🖼️',
@@ -3940,6 +3948,99 @@ const MultiSSH = {
 };
 
 /* ── GLOBAL HELPERS (called from HTML onclick) ─────────────── */
+
+// ═════════════════════════════════════════════════════════════
+// ПАТЧ: BrowserTakeover — передача управления браузером пользователю
+// Когда агент встречает CAPTCHA, 2FA, или не может залогиниться,
+// он показывает скриншот и просит пользователя помочь.
+// Пользователь может: ввести данные в чат, или нажать "Готово" когда закончит.
+// ═════════════════════════════════════════════════════════════
+const BrowserTakeover = {
+    show(evt) {
+        const container = document.querySelector('.chat-messages, #chat-messages, .messages-list, #messages-container, .messages-container');
+        if (!container) return;
+
+        const reason = evt.reason || 'custom';
+        const reasonLabels = {
+            'captcha': '🤖 Обнаружена CAPTCHA',
+            '2fa': '🔐 Требуется двухфакторная аутентификация',
+            'login_failed': '❌ Автоматический вход не удался',
+            'unusual_form': '🔍 Необычная форма входа',
+            'confirmation': '⚠️ Требуется подтверждение',
+            'custom': '🙋 Требуется ваше участие'
+        };
+
+        const screenshotHtml = evt.screenshot
+            ? `<div class="takeover-screenshot"><img src="data:image/png;base64,${evt.screenshot}" alt="Текущая страница" style="max-width:100%;border-radius:8px;border:1px solid var(--border-color);margin-bottom:12px;cursor:pointer;" onclick="Lightbox.show(this.src)"></div>`
+            : (evt.screenshot_url 
+                ? `<div class="takeover-screenshot"><img src="${evt.screenshot_url}" alt="Текущая страница" style="max-width:100%;border-radius:8px;border:1px solid var(--border-color);margin-bottom:12px;cursor:pointer;" onclick="Lightbox.show(this.src)"></div>`
+                : '');
+
+        const instruction = evt.instruction || evt.message || 'Пожалуйста, выполните действие вручную и нажмите "Готово"';
+
+        const actionsHtml = (evt.actions || []).map(a => {
+            if (a.type === 'input') {
+                return `<div class="takeover-field">
+                    <label class="auth-label">${a.label || a.name}</label>
+                    <input type="${a.input_type || 'text'}" class="auth-input form-input takeover-input" 
+                           data-field-name="${a.name}" placeholder="${a.placeholder || ''}">
+                </div>`;
+            }
+            return '';
+        }).join('');
+
+        const card = document.createElement('div');
+        card.className = 'browser-takeover-card';
+        card.innerHTML = `
+            <div class="takeover-header">
+                <span class="takeover-title">${reasonLabels[reason] || reasonLabels['custom']}</span>
+            </div>
+            ${evt.url ? `<div class="takeover-url">${evt.url}</div>` : ''}
+            ${screenshotHtml}
+            <div class="takeover-instruction">${instruction}</div>
+            ${actionsHtml}
+            <div class="takeover-actions">
+                <button class="btn-secondary takeover-skip">Пропустить</button>
+                ${actionsHtml ? '<button class="btn-primary takeover-submit-data">📤 Отправить данные</button>' : ''}
+                <button class="btn-primary takeover-done">✅ Готово, продолжай</button>
+            </div>
+        `;
+
+        container.appendChild(card);
+        container.scrollTop = container.scrollHeight;
+
+        // Обработчики кнопок
+        card.querySelector('.takeover-done').onclick = () => {
+            card.style.opacity = '0.5';
+            card.querySelector('.takeover-done').textContent = '⏳ Продолжаю...';
+            card.querySelector('.takeover-done').disabled = true;
+            // Отправляем сообщение агенту что пользователь закончил
+            Chat._sendUserMessage('[TAKEOVER_DONE] Пользователь завершил ручной ввод');
+        };
+
+        card.querySelector('.takeover-skip').onclick = () => {
+            card.remove();
+            Chat._sendUserMessage('[TAKEOVER_SKIP] Пользователь пропустил ручной ввод');
+        };
+
+        const submitBtn = card.querySelector('.takeover-submit-data');
+        if (submitBtn) {
+            submitBtn.onclick = () => {
+                const inputs = card.querySelectorAll('.takeover-input');
+                const data = {};
+                inputs.forEach(inp => {
+                    data[inp.dataset.fieldName] = inp.value;
+                });
+                card.style.opacity = '0.5';
+                submitBtn.textContent = '⏳ Отправлено...';
+                submitBtn.disabled = true;
+                Chat._sendUserMessage('[TAKEOVER_DATA] ' + JSON.stringify(data));
+            };
+        }
+    }
+};
+
+window.BrowserTakeover = BrowserTakeover;
 window.Chat = Chat;
 window.ChatList = ChatList;
 window.TaskPlan = TaskPlan;

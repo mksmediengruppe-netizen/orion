@@ -1,6 +1,6 @@
 {
   "user_id": "admin",
-  "chat_count": 384,
+  "chat_count": 386,
   "facts": [
     "Пользователя зовут Тестер5",
     "Работает с Elixir и Phoenix",
@@ -109,7 +109,9 @@
     "os": "Ubuntu",
     "deploy_path": "/var/www/html",
     "server_ip": "45.67.57.175",
-    "тематика изображений": "москва, утро, рассвет"
+    "тематика изображений": "москва, утро, рассвет",
+    "hosting_panel": "cp.beget.com",
+    "dns_tool": "dig"
   },
   "expertise_level": "unknown"
 }

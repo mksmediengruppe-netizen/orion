@@ -446,7 +446,7 @@ TOOLS_SCHEMA = [
         "type": "function",
         "function": {
             "name": "browser_click",
-            "description": "Click on an element on the current browser page. Use after browser_navigate. Supports CSS selectors (button.submit, #login-btn) and text selectors (text=Войти). Returns screenshot after click.",
+            "description": "Click on an element on the current browser page. Supports CSS selectors (button.submit, #login-btn), text selectors (text=Войти), Beget st-attributes ([st=\"button-dns-edit-node\"]), and xpath (xpath=//button). Waits for SPA navigation (Vue.js/React) after click. Returns screenshot.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -482,7 +482,7 @@ TOOLS_SCHEMA = [
         "type": "function",
         "function": {
             "name": "browser_fill",
-            "description": "Fill a form field on the current browser page. Use after browser_navigate. Selector is CSS (input[name=login], #password, textarea). Returns screenshot after fill.",
+            "description": "Fill a form field with Vue.js/React event triggers. Tries 3 strategies: Playwright fill, click+type, JavaScript setValue. Works with Vuetify, Material UI, and any SPA framework. Returns screenshot after fill.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -533,6 +533,178 @@ TOOLS_SCHEMA = [
                     "url": {"type": "string", "description": "URL of the login page (optional, uses current page if omitted)"},
                     "hint": {"type": "string", "description": "Hint for user about what system requires login (e.g. 'Bitrix admin panel', 'FTP server')"}
                 },
+                "required": []
+            }
+        }
+    },
+    # ── НОВЫЕ BROWSER ИНСТРУМЕНТЫ v2 ─────────────────────────────────
+    {
+        "type": "function",
+        "function": {
+            "name": "browser_type",
+            "description": "Type text character by character into a field (for SPA where browser_fill doesn't work). Clicks the field first, then types. Use when browser_fill fails with Vuetify/Material UI inputs.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "selector": {"type": "string", "description": "CSS selector of the input field"},
+                    "value": {"type": "string", "description": "Text to type"},
+                    "clear": {"type": "boolean", "description": "Clear field before typing (default: true)", "default": True}
+                },
+                "required": ["selector", "value"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "browser_js",
+            "description": "Execute arbitrary JavaScript on the current page. Returns result + screenshot. Use for complex DOM manipulation, reading page state, triggering Vue/React events.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "code": {"type": "string", "description": "JavaScript code to execute. Can return a value."}
+                },
+                "required": ["code"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "browser_press_key",
+            "description": "Press a keyboard key on the current page. Use Enter to submit forms, Tab to move focus, Escape to close dialogs, ArrowDown for dropdowns.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "key": {"type": "string", "description": "Key name: Enter, Tab, Escape, ArrowDown, ArrowUp, Control+a, etc."}
+                },
+                "required": ["key"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "browser_scroll",
+            "description": "Scroll the current page in a direction. Use to see content below the fold, load lazy content, or navigate long pages.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "direction": {"type": "string", "enum": ["up", "down", "left", "right"], "description": "Scroll direction"},
+                    "amount": {"type": "integer", "description": "Scroll amount in pixels (default: 500)", "default": 500}
+                },
+                "required": ["direction"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "browser_hover",
+            "description": "Hover mouse over an element to reveal hidden menus, tooltips, or action buttons.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "selector": {"type": "string", "description": "CSS selector of the element to hover over"}
+                },
+                "required": ["selector"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "browser_wait",
+            "description": "Wait for an element to appear or URL to change. Use after actions that trigger async loading (AJAX, SPA routing).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "selector": {"type": "string", "description": "CSS selector to wait for (optional)"},
+                    "url_contains": {"type": "string", "description": "Wait until URL contains this substring (optional)"},
+                    "timeout": {"type": "integer", "description": "Max wait time in ms (default: 15000)", "default": 15000}
+                },
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "browser_elements",
+            "description": "Get a list of elements matching a selector with their text, attributes, and positions. Use to understand page structure before clicking.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "selector": {"type": "string", "description": "CSS selector to match elements (e.g. 'button', '.menu-item', '[st]')"},
+                    "limit": {"type": "integer", "description": "Max elements to return (default: 50)", "default": 50}
+                },
+                "required": ["selector"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "browser_screenshot",
+            "description": "Take a screenshot of the current page. Returns base64 image + current URL and title.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "browser_page_info",
+            "description": "Get detailed info about current page: URL, title, forms, buttons, links, captcha detection, 2FA detection. Use to understand what's on the page before taking action.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "smart_login",
+            "description": "Automatically log into any website. Tries multiple strategies: find login/password fields, fill them, submit via Enter/button/JS. If login fails or CAPTCHA detected — returns need_user_takeover=true. Use this as the FIRST approach for any login task.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string", "description": "Login page URL"},
+                    "login": {"type": "string", "description": "Username/email/login"},
+                    "password": {"type": "string", "description": "Password"}
+                },
+                "required": ["url", "login", "password"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "browser_ask_user",
+            "description": "Request user to take over browser control. Use when: CAPTCHA detected, 2FA required, unusual login form, or any situation where automated input fails. Shows screenshot to user with instructions. User can: enter credentials in chat, manually control browser, or skip.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "reason": {"type": "string", "enum": ["captcha", "2fa", "login_failed", "unusual_form", "confirmation", "custom"], "description": "Why user takeover is needed"},
+                    "instruction": {"type": "string", "description": "What the user should do (shown in chat)"}
+                },
+                "required": ["reason"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "browser_takeover_done",
+            "description": "Call after user has finished manual browser interaction. Takes screenshot and returns current page state so agent can continue.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
                 "required": []
             }
         }
@@ -796,11 +968,23 @@ AGENT_SYSTEM_PROMPT = """Ты — ORION Digital v1.0, автономный AI-и
 Не создавай дубликаты: store_memory(key="user_name", value="Новое имя").
 
 🔧 ИНТЕРАКТИВНЫЙ БРАУЗЕР (новые инструменты):
-- browser_click(selector): кликнуть по элементу (CSS селектор или text=Войти)
-- browser_fill(selector, value): заполнить поле формы
+- browser_click(selector): кликнуть по элементу (CSS, text=Войти, [st="..."], xpath=//...)
+- browser_fill(selector, value): заполнить поле с триггером Vue/React events (3 стратегии)
+- browser_type(selector, value): посимвольный ввод (когда fill не работает с Vuetify)
 - browser_submit(selector): отправить форму (или Enter если без селектора)
-- browser_select(selector, value): выбрать из выпадающего списка
-- browser_ask_auth(hint): обнаружить форму логина и запросить данные у пользователя через UI
+- browser_select(selector, value): выбрать из dropdown (нативный и Vuetify)
+- browser_js(code): выполнить JavaScript на странице
+- browser_press_key(key): нажать клавишу (Enter, Tab, Escape, ArrowDown)
+- browser_scroll(direction): прокрутить страницу (up/down/left/right)
+- browser_hover(selector): навести курсор (для скрытых меню)
+- browser_wait(selector/url_contains): ждать элемент или смену URL
+- browser_elements(selector): получить список элементов с текстом и атрибутами
+- browser_screenshot(): скриншот текущей страницы
+- browser_page_info(): URL, title, формы, кнопки, ссылки, капча, 2FA
+- smart_login(url, login, password): автоматический вход в любой ЛК
+- browser_ask_user(reason, instruction): передать управление пользователю (капча, 2FA)
+- browser_takeover_done(): продолжить после ручного ввода пользователя
+- browser_ask_auth(hint): обнаружить форму логина и запросить данные у пользователя
 
 ИСПОЛЬЗУЙ ИНТЕРАКТИВНЫЙ БРАУЗЕР для:
 - Входа в админки CMS (Битрикс, WordPress)
@@ -808,7 +992,12 @@ AGENT_SYSTEM_PROMPT = """Ты — ORION Digital v1.0, автономный AI-и
 - Навигации по меню и кнопкам
 - Тестирования UI интерфейсов
 ПРАВИЛО АВТОРИЗАЦИИ:
-Когда встречаешь форму логина — ИСПОЛЬЗУЙ browser_ask_auth.
+Когда встречаешь форму логина:
+1. Если логин/пароль уже даны в сообщении — используй smart_login(url, login, password)
+2. Если smart_login вернул need_user_takeover — используй browser_ask_user(reason)
+3. Если логин/пароль НЕ даны — используй browser_ask_auth(hint)
+4. При CAPTCHA или 2FA — ВСЕГДА используй browser_ask_user("captcha") или browser_ask_user("2fa")
+5. После ручного ввода пользователя — вызови browser_takeover_done() чтобы продолжить
 НИКОГДА не хардкодь пароли в тексте ответа.
 Пользователь вводит данные в безопасную форму в UI ORION.
 После получения данных — используй browser_fill + browser_submit.
@@ -4204,6 +4393,19 @@ ReactDOM.createRoot(document.getElementById('root')).render(<App />);
                 for event in self._call_ai_stream(final_messages, tools=None):
                     if event["type"] == "text_delta":
                         yield self._sse({"type": "content", "text": event["text"]})
+                    # Обработка browser_ask_user / smart_login takeover
+                    if result.get("_takeover_required"):
+                        yield self._sse("browser_takeover", {
+                            "type": result.get("type", "browser_takeover_request"),
+                            "reason": result.get("reason", ""),
+                            "message": result.get("message", "Требуется ваше участие"),
+                            "instruction": result.get("instruction", ""),
+                            "url": result.get("url", ""),
+                            "screenshot": result.get("screenshot", ""),
+                            "screenshot_url": result.get("screenshot_url", ""),
+                            "actions": result.get("actions", [])
+                        })
+
                     elif event["type"] == "text_complete":
                         break
             except Exception as e:
@@ -4334,6 +4536,31 @@ class MultiAgentLoop(AgentLoop):
             _current_orion_mode = getattr(self, 'orion_mode', getattr(self, '_orion_mode', 'turbo_standard'))
             if _current_orion_mode in PRO_MODES:
                 _plog.info(f"[Pipeline] Pro/Architect mode: keeping model {self.model} (no switch)")
+            elif tool_name == "browser_type":
+                return self.browser.type_text(args.get("selector",""), args.get("value",""), clear=args.get("clear",True))
+            elif tool_name == "browser_js":
+                return self.browser.execute_js(args.get("code",""))
+            elif tool_name == "browser_press_key":
+                return self.browser.press_key(args.get("key","Enter"))
+            elif tool_name == "browser_scroll":
+                return self.browser.scroll(args.get("direction","down"), int(args.get("amount",500)))
+            elif tool_name == "browser_hover":
+                return self.browser.hover(args.get("selector",""))
+            elif tool_name == "browser_wait":
+                return self.browser.wait_for(selector=args.get("selector"), url_contains=args.get("url_contains"), timeout=int(args.get("timeout",15000)))
+            elif tool_name == "browser_elements":
+                return self.browser.get_elements(args.get("selector","*"), int(args.get("limit",50)))
+            elif tool_name == "browser_screenshot":
+                return self.browser.screenshot()
+            elif tool_name == "browser_page_info":
+                return self.browser.get_page_info()
+            elif tool_name == "smart_login":
+                return self.browser.smart_login(args.get("url",""), args.get("login",""), args.get("password",""))
+            elif tool_name == "browser_ask_user":
+                return self.browser.ask_user(args.get("reason","custom"), args.get("instruction",""))
+            elif tool_name == "browser_takeover_done":
+                return self.browser.takeover_done()
+
             else:
                 try:
                     from orchestrator_v2 import get_model_for_agent

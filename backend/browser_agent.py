@@ -1,17 +1,26 @@
 """
-Browser Agent Module — Навигация по сайтам, парсинг, проверка доступности.
-Использует requests + BeautifulSoup для headless browsing.
-Playwright используется для реальных скриншотов и ИНТЕРАКТИВНОЙ автоматизации.
+Browser Agent Module v2 — Универсальная автоматизация любых веб-панелей.
+Playwright для реального браузера + механизм передачи управления пользователю.
 
-ПАТЧ ЗАДАЧА-1: Добавлены методы интерактивной автоматизации:
-- click(selector)       — кликнуть по элементу
-- fill(selector, value) — заполнить поле формы
-- submit(selector)      — отправить форму
-- select(selector, val) — выбрать из <select>
-- detect_login_form()   — обнаружить форму логина и вернуть поля
-- ftp_upload()          — загрузить файл на FTP через ftplib
-- ftp_download()        — скачать файл с FTP
-- ftp_list()            — список файлов на FTP
+КЛЮЧЕВЫЕ ВОЗМОЖНОСТИ:
+- navigate(url)           — открыть страницу, получить скриншот + DOM
+- fill(selector, value)   — заполнить поле с триггером Vue/React events
+- type_text(selector, v)  — посимвольный ввод (для SPA где fill не работает)
+- click(selector)         — кликнуть с умным ожиданием навигации
+- press_key(key)          — нажать клавишу (Enter, Tab, Escape)
+- select_option(sel, val) — выбрать из dropdown (native <select> и Vuetify)
+- execute_js(code)        — выполнить произвольный JavaScript
+- wait_for(selector/url)  — ждать появления элемента или смены URL
+- get_elements(selector)  — получить список элементов с текстом и атрибутами
+- screenshot()            — скриншот текущей страницы
+- get_page_info()         — URL, title, DOM-структура, формы
+- smart_login(url,l,p)    — автоматический логин в любой ЛК
+- ask_user(reason)        — передать управление пользователю (капча, 2FA)
+- scroll(direction)       — прокрутка страницы
+- hover(selector)         — навести курсор
+
+FTP ИНСТРУМЕНТЫ (ftplib):
+- ftp_upload, ftp_download, ftp_list, ftp_delete
 """
 
 import requests
@@ -24,6 +33,8 @@ import threading
 import ftplib
 import io
 import logging
+import os
+import uuid
 
 logger = logging.getLogger("browser_agent")
 
@@ -37,18 +48,21 @@ except ImportError:
 
 _pw_lock = threading.Lock()
 
-# Глобальный persistent браузер для интерактивных операций
+# Глобальный persistent браузер
 _pw_browser = None
 _pw_context = None
 _pw_page = None
 _pw_playwright = None
+
+# Флаг ожидания пользователя (для takeover)
+_user_takeover_active = False
+_user_takeover_event = threading.Event()
 
 
 def _get_pw_page(url: str = None, width: int = 1280, height: int = 800):
     """
     Получить или создать Playwright page.
     Если url задан — навигируем на него.
-    Возвращает (playwright, browser, context, page) или None если недоступен.
     """
     global _pw_browser, _pw_context, _pw_page, _pw_playwright
     if not _playwright_available:
@@ -60,329 +74,358 @@ def _get_pw_page(url: str = None, width: int = 1280, height: int = 800):
             _pw_browser = _pw_playwright.chromium.launch(
                 headless=True,
                 args=["--no-sandbox", "--disable-setuid-sandbox",
-                      "--disable-dev-shm-usage", "--disable-gpu"]
+                      "--disable-dev-shm-usage", "--disable-gpu",
+                      "--disable-web-security", "--allow-running-insecure-content"]
             )
         if _pw_context is None:
             _pw_context = _pw_browser.new_context(
                 viewport={"width": width, "height": height},
-                user_agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                user_agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                           "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+                locale="ru-RU",
+                timezone_id="Europe/Moscow",
             )
+            # Включаем cookies persistence
+            _pw_context.set_default_timeout(15000)
         if _pw_page is None or _pw_page.is_closed():
             _pw_page = _pw_context.new_page()
         if url:
-            _pw_page.goto(url, timeout=25000, wait_until="domcontentloaded")
-            _pw_page.wait_for_timeout(1200)
+            _pw_page.goto(url, timeout=30000, wait_until="domcontentloaded")
+            # Ждём загрузки SPA-фреймворков
+            try:
+                _pw_page.wait_for_load_state("networkidle", timeout=10000)
+            except Exception:
+                _pw_page.wait_for_timeout(2000)
         return _pw_playwright, _pw_browser, _pw_context, _pw_page
     except Exception as e:
         logger.warning(f"[PW] _get_pw_page error: {e}")
-        # Сброс при ошибке
         _pw_page = None
         _pw_context = None
         _pw_browser = None
         return None, None, None, None
 
 
-def _take_playwright_screenshot(url: str, width: int = 1280, height: int = 800) -> str | None:
-    """Take a real browser screenshot using Playwright. Returns base64 PNG or None."""
-    if not _playwright_available:
-        return None
+def _take_screenshot_safe(page) -> str:
+    """Безопасно сделать скриншот, вернуть base64 или пустую строку."""
     try:
-        with _pw_lock:
-            _, _, _, page = _get_pw_page(url, width, height)
-            if page is None:
-                return None
-            png_bytes = page.screenshot(full_page=False)
-            return base64.b64encode(png_bytes).decode("utf-8")
-    except Exception as e:
-        logger.debug(f"[PW] screenshot error: {e}")
-        return None
-
-
-def _screenshot_current_page() -> str | None:
-    """Сделать скриншот текущей страницы без навигации."""
-    if not _playwright_available or _pw_page is None or _pw_page.is_closed():
-        return None
-    try:
-        png_bytes = _pw_page.screenshot(full_page=False)
+        png_bytes = page.screenshot(full_page=False)
         return base64.b64encode(png_bytes).decode("utf-8")
     except Exception:
-        return None
+        return ""
+
+
+def _trigger_input_events(page, selector: str):
+    """
+    Триггерить input/change/blur events для Vue.js/React/Angular.
+    Это критически важно — без этого SPA-фреймворки не видят изменения.
+    """
+    try:
+        page.evaluate(f"""(() => {{
+            const el = document.querySelector('{selector}');
+            if (!el) return;
+            el.dispatchEvent(new Event('input', {{ bubbles: true }}));
+            el.dispatchEvent(new Event('change', {{ bubbles: true }}));
+            el.dispatchEvent(new Event('blur', {{ bubbles: true }}));
+            // Vue.js 2 specific
+            if (el.__vue__) {{
+                el.__vue__.$emit('input', el.value);
+                el.__vue__.$emit('change', el.value);
+            }}
+            // Vue.js 3 / Vuetify
+            const vueEvent = new Event('input', {{ bubbles: true }});
+            Object.defineProperty(vueEvent, 'target', {{ value: el }});
+            el.dispatchEvent(vueEvent);
+        }})()""")
+    except Exception:
+        pass
 
 
 class BrowserAgent:
-    """Headless browser agent for web navigation, parsing and interactive automation."""
+    """Universal browser agent for web automation with user takeover support."""
 
     def __init__(self, timeout=30):
         self.timeout = timeout
         self.session = requests.Session()
         self.session.headers.update({
-            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                          "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
         })
         self.history = []
         self._last_screenshot_b64 = None
-        self._current_url = None  # Текущий URL в Playwright
+        self._current_url = None
+        # Директория для скриншотов takeover
+        self._screenshot_dir = "/var/www/orion/backend/static/screenshots"
+        os.makedirs(self._screenshot_dir, exist_ok=True)
 
-    def navigate(self, url):
-        """Navigate to a URL and return page content + screenshot."""
+    # ══════════════════════════════════════════════════════════════════
+    # ██ НАВИГАЦИЯ ██
+    # ══════════════════════════════════════════════════════════════════
+
+    def navigate(self, url: str) -> dict:
+        """Открыть страницу в Playwright браузере. Вернуть скриншот + информацию."""
         try:
             if not url.startswith(("http://", "https://")):
                 url = "https://" + url
 
+            if not _playwright_available:
+                return self._navigate_requests(url)
+
+            with _pw_lock:
+                _, _, _, page = _get_pw_page(url)
+                if page is None:
+                    return self._navigate_requests(url)
+
+                self._current_url = page.url
+                title = ""
+                try:
+                    title = page.title()
+                except Exception:
+                    pass
+
+                screenshot = _take_screenshot_safe(page)
+                self._last_screenshot_b64 = screenshot
+
+                # Получаем основную информацию о странице
+                page_info = self._extract_page_info(page)
+
+                self.history.append({"url": page.url, "status": 200, "time": time.time()})
+
+                return {
+                    "success": True,
+                    "url": page.url,
+                    "title": title,
+                    "status_code": 200,
+                    "page_info": page_info,
+                    "screenshot": screenshot
+                }
+        except Exception as e:
+            return {"success": False, "url": url, "error": str(e)}
+
+    def _navigate_requests(self, url: str) -> dict:
+        """Fallback навигация через requests (без JS)."""
+        try:
             resp = self.session.get(url, timeout=self.timeout, allow_redirects=True, verify=False)
             self.history.append({"url": url, "status": resp.status_code, "time": time.time()})
-
-            # Take real screenshot with Playwright (persistent page)
-            screenshot_b64 = None
-            if _playwright_available:
-                with _pw_lock:
-                    try:
-                        _, _, _, page = _get_pw_page(resp.url)
-                        if page:
-                            screenshot_b64 = base64.b64encode(page.screenshot(full_page=False)).decode("utf-8")
-                            self._current_url = resp.url
-                    except Exception as e:
-                        logger.debug(f"[PW] navigate screenshot error: {e}")
-
-            if screenshot_b64:
-                self._last_screenshot_b64 = screenshot_b64
-
             return {
                 "success": True,
                 "url": resp.url,
                 "status_code": resp.status_code,
-                "content_type": resp.headers.get("Content-Type", ""),
-                "html": resp.text[:100000],
-                "headers": dict(resp.headers),
-                "elapsed_ms": int(resp.elapsed.total_seconds() * 1000),
-                "screenshot": screenshot_b64
+                "html": resp.text[:50000],
+                "note": "Загружено через requests (без JavaScript). Для SPA используйте Playwright."
             }
         except Exception as e:
             return {"success": False, "url": url, "error": str(e)}
 
-    def check_site(self, url):
-        """Check if a website is accessible and return status info + screenshot."""
+    def _extract_page_info(self, page) -> dict:
+        """Извлечь полезную информацию со страницы для AI."""
         try:
-            if not url.startswith(("http://", "https://")):
-                url = "https://" + url
+            info = page.evaluate("""() => {
+                const forms = [];
+                document.querySelectorAll('form').forEach((f, i) => {
+                    const inputs = [];
+                    f.querySelectorAll('input, select, textarea').forEach(el => {
+                        inputs.push({
+                            tag: el.tagName.toLowerCase(),
+                            type: el.type || '',
+                            name: el.name || '',
+                            id: el.id || '',
+                            placeholder: el.placeholder || '',
+                            value: el.type === 'password' ? '***' : (el.value || '').substring(0, 50)
+                        });
+                    });
+                    forms.push({
+                        action: f.action || '',
+                        method: f.method || 'get',
+                        inputs: inputs
+                    });
+                });
 
-            start = time.time()
-            resp = self.session.get(url, timeout=self.timeout, allow_redirects=True, verify=False)
-            elapsed = round((time.time() - start) * 1000)
+                const buttons = [];
+                document.querySelectorAll('button, input[type="submit"], a.btn, [role="button"]').forEach(el => {
+                    buttons.push({
+                        tag: el.tagName.toLowerCase(),
+                        text: (el.textContent || '').trim().substring(0, 50),
+                        type: el.type || '',
+                        id: el.id || '',
+                        class: (el.className || '').substring(0, 80)
+                    });
+                });
 
-            title = ""
-            title_match = re.search(r"<title[^>]*>(.*?)</title>", resp.text, re.IGNORECASE | re.DOTALL)
-            if title_match:
-                title = title_match.group(1).strip()
+                const links = [];
+                document.querySelectorAll('a[href]').forEach(el => {
+                    const href = el.getAttribute('href');
+                    if (href && !href.startsWith('javascript:') && !href.startsWith('#')) {
+                        links.push({
+                            text: (el.textContent || '').trim().substring(0, 50),
+                            href: href.substring(0, 200)
+                        });
+                    }
+                });
 
-            screenshot_b64 = None
-            if _playwright_available:
-                with _pw_lock:
-                    try:
-                        _, _, _, page = _get_pw_page(resp.url)
-                        if page:
-                            screenshot_b64 = base64.b64encode(page.screenshot(full_page=False)).decode("utf-8")
-                    except Exception:
-                        pass
-            if screenshot_b64:
-                self._last_screenshot_b64 = screenshot_b64
-
-            return {
-                "success": True,
-                "url": resp.url,
-                "status_code": resp.status_code,
-                "title": title,
-                "response_time_ms": elapsed,
-                "content_length": len(resp.text),
-                "is_https": resp.url.startswith("https://"),
-                "server": resp.headers.get("Server", "unknown"),
-                "screenshot": screenshot_b64
-            }
+                return {
+                    title: document.title,
+                    url: window.location.href,
+                    forms: forms.slice(0, 5),
+                    buttons: buttons.slice(0, 20),
+                    links: links.slice(0, 30),
+                    has_captcha: !!(document.querySelector('[class*="captcha"], [id*="captcha"], iframe[src*="recaptcha"], iframe[src*="hcaptcha"]')),
+                    has_2fa: !!(document.querySelector('[name*="otp"], [name*="2fa"], [name*="code"], [placeholder*="код"], [placeholder*="code"]')),
+                    body_text: document.body ? document.body.innerText.substring(0, 2000) : ''
+                };
+            }""")
+            return info
         except Exception as e:
-            return {"success": False, "url": url, "error": str(e)}
-
-    def get_text(self, url):
-        """Get clean text content from a webpage."""
-        result = self.navigate(url)
-        if not result["success"]:
-            return result
-
-        html = result["html"]
-        html = re.sub(r"<script[^>]*>.*?</script>", "", html, flags=re.DOTALL | re.IGNORECASE)
-        html = re.sub(r"<style[^>]*>.*?</style>", "", html, flags=re.DOTALL | re.IGNORECASE)
-        html = re.sub(r"<!--.*?-->", "", html, flags=re.DOTALL)
-        text = re.sub(r"<[^>]+>", " ", html)
-        text = re.sub(r"\s+", " ", text).strip()
-        if len(text) > 20000:
-            text = text[:20000] + "... [truncated]"
-
-        return {
-            "success": True,
-            "url": result["url"],
-            "text": text,
-            "status_code": result["status_code"],
-            "screenshot": result.get("screenshot")
-        }
-
-    def get_links(self, url):
-        """Extract all links from a webpage."""
-        result = self.navigate(url)
-        if not result["success"]:
-            return result
-
-        html = result["html"]
-        links = []
-        for match in re.finditer(r'<a[^>]+href=["\']([^"\']+)["\']', html, re.IGNORECASE):
-            href = match.group(1)
-            if href.startswith(("javascript:", "#", "mailto:", "tel:")):
-                continue
-            absolute = urljoin(result["url"], href)
-            links.append(absolute)
-
-        links = list(dict.fromkeys(links))
-        return {
-            "success": True,
-            "url": result["url"],
-            "links": links[:200],
-            "count": len(links),
-            "screenshot": result.get("screenshot")
-        }
-
-    def post_data(self, url, data=None, json_data=None, headers=None):
-        """Send POST request to a URL."""
-        try:
-            if not url.startswith(("http://", "https://")):
-                url = "https://" + url
-
-            extra_headers = headers or {}
-            resp = self.session.post(
-                url, data=data, json=json_data,
-                headers=extra_headers, timeout=self.timeout, verify=False
-            )
-            return {
-                "success": True,
-                "url": resp.url,
-                "status_code": resp.status_code,
-                "response": resp.text[:50000],
-                "headers": dict(resp.headers)
-            }
-        except Exception as e:
-            return {"success": False, "url": url, "error": str(e)}
-
-    def check_api(self, url, method="GET", data=None, headers=None):
-        """Check an API endpoint."""
-        try:
-            if not url.startswith(("http://", "https://")):
-                url = "https://" + url
-
-            extra_headers = {"Content-Type": "application/json"}
-            if headers:
-                extra_headers.update(headers)
-
-            start = time.time()
-            if method.upper() == "GET":
-                resp = self.session.get(url, headers=extra_headers, timeout=self.timeout, verify=False)
-            elif method.upper() == "POST":
-                resp = self.session.post(url, json=data, headers=extra_headers, timeout=self.timeout, verify=False)
-            elif method.upper() == "PUT":
-                resp = self.session.put(url, json=data, headers=extra_headers, timeout=self.timeout, verify=False)
-            elif method.upper() == "DELETE":
-                resp = self.session.delete(url, headers=extra_headers, timeout=self.timeout, verify=False)
-            else:
-                return {"success": False, "error": f"Unsupported method: {method}"}
-
-            elapsed = round((time.time() - start) * 1000)
-            try:
-                json_response = resp.json()
-            except Exception:
-                json_response = None
-
-            return {
-                "success": True,
-                "url": resp.url,
-                "method": method.upper(),
-                "status_code": resp.status_code,
-                "response_time_ms": elapsed,
-                "json": json_response,
-                "text": resp.text[:20000] if not json_response else None,
-                "headers": dict(resp.headers)
-            }
-        except Exception as e:
-            return {"success": False, "url": url, "error": str(e)}
-
-    def screenshot_check(self, url):
-        """Check visual aspects of a site (headers, meta, resources) + real screenshot."""
-        result = self.navigate(url)
-        if not result["success"]:
-            return result
-
-        html = result["html"]
-        metas = {}
-        for match in re.finditer(r'<meta[^>]+>', html, re.IGNORECASE):
-            tag = match.group(0)
-            name = re.search(r'name=["\']([^"\']+)["\']', tag)
-            content = re.search(r'content=["\']([^"\']+)["\']', tag)
-            if name and content:
-                metas[name.group(1)] = content.group(1)
-
-        scripts = len(re.findall(r'<script', html, re.IGNORECASE))
-        styles = len(re.findall(r'<link[^>]+stylesheet', html, re.IGNORECASE))
-        images = len(re.findall(r'<img', html, re.IGNORECASE))
-
-        title = ""
-        title_match = re.search(r"<title[^>]*>(.*?)</title>", html, re.IGNORECASE | re.DOTALL)
-        if title_match:
-            title = title_match.group(1).strip()
-
-        return {
-            "success": True,
-            "url": result["url"],
-            "title": title,
-            "meta": metas,
-            "resources": {"scripts": scripts, "stylesheets": styles, "images": images},
-            "html_size": len(html),
-            "status_code": result["status_code"],
-            "screenshot": result.get("screenshot")
-        }
+            return {"error": str(e)}
 
     # ══════════════════════════════════════════════════════════════════
-    # ██ ЗАДАЧА-1: ИНТЕРАКТИВНАЯ АВТОМАТИЗАЦИЯ (Playwright) ██
+    # ██ ВВОД ДАННЫХ ██
     # ══════════════════════════════════════════════════════════════════
 
-    def click(self, selector: str, timeout: int = 8000) -> dict:
+    def fill(self, selector: str, value: str, timeout: int = 8000) -> dict:
         """
-        Кликнуть по элементу на текущей странице.
-        selector — CSS-селектор или текст кнопки (text=Войти).
-        Для SPA (Vue.js/React) ждёт networkidle после клика.
+        Заполнить поле формы. Работает с Vue.js/React/Angular.
+        Триггерит input/change/blur events для SPA-фреймворков.
         """
         if not _playwright_available:
-            return {"success": False, "error": "Playwright не установлен. Выполни: pip install playwright && playwright install chromium"}
+            return {"success": False, "error": "Playwright не установлен."}
         try:
             with _pw_lock:
                 _, _, _, page = _get_pw_page()
                 if page is None:
-                    return {"success": False, "error": "Playwright page не инициализирована. Сначала вызови browser_navigate."}
+                    return {"success": False, "error": "Нет активной страницы. Сначала вызови browser_navigate."}
+
+                # Пробуем несколько стратегий заполнения
+                filled = False
+                error_msg = ""
+
+                # Стратегия 1: Playwright fill (работает для большинства)
+                try:
+                    page.fill(selector, value, timeout=timeout)
+                    _trigger_input_events(page, selector)
+                    filled = True
+                except Exception as e1:
+                    error_msg = str(e1)
+
+                # Стратегия 2: Click + Type (для Vuetify/Material UI)
+                if not filled:
+                    try:
+                        page.click(selector, timeout=3000)
+                        page.wait_for_timeout(200)
+                        page.keyboard.press("Control+a")
+                        page.keyboard.type(value, delay=30)
+                        _trigger_input_events(page, selector)
+                        filled = True
+                    except Exception as e2:
+                        error_msg += f" | click+type: {e2}"
+
+                # Стратегия 3: JavaScript setValue (последний resort)
+                if not filled:
+                    try:
+                        safe_value = value.replace("'", "\\'")
+                        js_code = f"""(() => {{
+                            const el = document.querySelector('{selector}');
+                            if (!el) throw new Error('Element not found');
+                            const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+                                window.HTMLInputElement.prototype, 'value'
+                            ).set;
+                            nativeInputValueSetter.call(el, '{safe_value}');
+                            el.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                            el.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                        }})()"""
+                        page.evaluate(js_code)
+                        filled = True
+                    except Exception as e3:
+                        error_msg += f" | js: {e3}"
+
+                page.wait_for_timeout(300)
+                screenshot = _take_screenshot_safe(page)
+                self._last_screenshot_b64 = screenshot
+
+                return {
+                    "success": filled,
+                    "filled": selector,
+                    "value_length": len(value),
+                    "screenshot": screenshot,
+                    "error": error_msg if not filled else None
+                }
+        except Exception as e:
+            return {"success": False, "selector": selector, "error": str(e)}
+
+    def type_text(self, selector: str, value: str, delay: int = 50, clear: bool = True) -> dict:
+        """
+        Посимвольный ввод текста (имитация реального набора).
+        Используй когда fill() не работает с SPA.
+        """
+        if not _playwright_available:
+            return {"success": False, "error": "Playwright не установлен."}
+        try:
+            with _pw_lock:
+                _, _, _, page = _get_pw_page()
+                if page is None:
+                    return {"success": False, "error": "Нет активной страницы."}
+
+                page.click(selector, timeout=5000)
+                page.wait_for_timeout(200)
+                if clear:
+                    page.keyboard.press("Control+a")
+                    page.keyboard.press("Backspace")
+                    page.wait_for_timeout(100)
+                page.keyboard.type(value, delay=delay)
+                _trigger_input_events(page, selector)
+                page.wait_for_timeout(300)
+
+                screenshot = _take_screenshot_safe(page)
+                self._last_screenshot_b64 = screenshot
+
+                return {
+                    "success": True,
+                    "typed": selector,
+                    "value_length": len(value),
+                    "screenshot": screenshot
+                }
+        except Exception as e:
+            return {"success": False, "selector": selector, "error": str(e)}
+
+    # ══════════════════════════════════════════════════════════════════
+    # ██ КЛИК И НАВИГАЦИЯ ██
+    # ══════════════════════════════════════════════════════════════════
+
+    def click(self, selector: str, timeout: int = 8000) -> dict:
+        """
+        Кликнуть по элементу. Умное ожидание для SPA.
+        Поддерживает: CSS-селекторы, text=..., [st=...] (Beget), xpath=...
+        """
+        if not _playwright_available:
+            return {"success": False, "error": "Playwright не установлен."}
+        try:
+            with _pw_lock:
+                _, _, _, page = _get_pw_page()
+                if page is None:
+                    return {"success": False, "error": "Нет активной страницы."}
 
                 url_before = page.url
 
-                # Поддержка text=... селекторов
+                # Поддержка разных типов селекторов
                 if selector.startswith("text="):
                     text_val = selector[5:]
                     page.get_by_text(text_val, exact=False).first.click(timeout=timeout)
-                elif selector.startswith("[st="):
-                    # Beget st-атрибут селектор
-                    page.click(selector, timeout=timeout)
+                elif selector.startswith("xpath="):
+                    page.locator(selector).first.click(timeout=timeout)
                 else:
                     page.click(selector, timeout=timeout)
 
-                # Ждём навигацию или SPA-переход (Vue.js/React)
+                # Умное ожидание: сначала networkidle, потом fallback
                 try:
-                    page.wait_for_load_state("networkidle", timeout=8000)
+                    page.wait_for_load_state("networkidle", timeout=10000)
                 except Exception:
                     page.wait_for_timeout(3000)
 
-                screenshot = base64.b64encode(page.screenshot(full_page=False)).decode("utf-8")
+                # Дополнительное ожидание для SPA-роутеров
+                page.wait_for_timeout(500)
+
+                screenshot = _take_screenshot_safe(page)
                 self._last_screenshot_b64 = screenshot
                 url_after = page.url
 
@@ -397,11 +440,9 @@ class BrowserAgent:
         except Exception as e:
             return {"success": False, "selector": selector, "error": str(e)}
 
-    def fill(self, selector: str, value: str, timeout: int = 8000) -> dict:
+    def press_key(self, key: str) -> dict:
         """
-        Заполнить поле формы на текущей странице.
-        selector — CSS-селектор поля (input[name=login], #password и т.д.)
-        value    — значение для ввода
+        Нажать клавишу: Enter, Tab, Escape, ArrowDown, Control+a и т.д.
         """
         if not _playwright_available:
             return {"success": False, "error": "Playwright не установлен."}
@@ -409,75 +450,119 @@ class BrowserAgent:
             with _pw_lock:
                 _, _, _, page = _get_pw_page()
                 if page is None:
-                    return {"success": False, "error": "Playwright page не инициализирована. Сначала вызови browser_navigate."}
-
-                page.fill(selector, value, timeout=timeout)
-                page.wait_for_timeout(300)
-                screenshot = base64.b64encode(page.screenshot(full_page=False)).decode("utf-8")
-                self._last_screenshot_b64 = screenshot
-
-                return {
-                    "success": True,
-                    "filled": selector,
-                    "value_length": len(value),
-                    "screenshot": screenshot
-                }
-        except Exception as e:
-            return {"success": False, "selector": selector, "error": str(e)}
-
-    def submit(self, selector: str = None, timeout: int = 10000) -> dict:
-        """
-        Отправить форму.
-        selector — CSS-селектор кнопки submit или самой формы.
-        Если selector=None — нажимает Enter на активном элементе.
-        """
-        if not _playwright_available:
-            return {"success": False, "error": "Playwright не установлен."}
-        try:
-            with _pw_lock:
-                _, _, _, page = _get_pw_page()
-                if page is None:
-                    return {"success": False, "error": "Playwright page не инициализирована."}
+                    return {"success": False, "error": "Нет активной страницы."}
 
                 url_before = page.url
+                page.keyboard.press(key)
 
-                if selector:
-                    # Пробуем click на submit кнопку
+                # Если Enter — ждём возможную навигацию
+                if key.lower() in ("enter", "return"):
                     try:
-                        page.click(selector, timeout=timeout)
+                        page.wait_for_load_state("networkidle", timeout=10000)
                     except Exception:
-                        # Fallback: submit через форму
-                        page.evaluate(f"document.querySelector('{selector}').submit()")
+                        page.wait_for_timeout(3000)
                 else:
-                    # Enter на активном элементе
-                    page.keyboard.press("Enter")
+                    page.wait_for_timeout(500)
 
-                # Ждём навигации или изменения страницы
-                try:
-                    page.wait_for_load_state("networkidle", timeout=8000)
-                except Exception:
-                    page.wait_for_timeout(2000)
-
-                screenshot = base64.b64encode(page.screenshot(full_page=False)).decode("utf-8")
+                screenshot = _take_screenshot_safe(page)
                 self._last_screenshot_b64 = screenshot
                 url_after = page.url
 
                 return {
                     "success": True,
-                    "submitted": selector or "Enter",
+                    "key": key,
                     "url_before": url_before,
                     "url_after": url_after,
                     "navigated": url_before != url_after,
                     "screenshot": screenshot
                 }
         except Exception as e:
+            return {"success": False, "key": key, "error": str(e)}
+
+    def scroll(self, direction: str = "down", amount: int = 500) -> dict:
+        """Прокрутить страницу. direction: up/down/left/right."""
+        if not _playwright_available:
+            return {"success": False, "error": "Playwright не установлен."}
+        try:
+            with _pw_lock:
+                _, _, _, page = _get_pw_page()
+                if page is None:
+                    return {"success": False, "error": "Нет активной страницы."}
+
+                if direction == "down":
+                    page.mouse.wheel(0, amount)
+                elif direction == "up":
+                    page.mouse.wheel(0, -amount)
+                elif direction == "right":
+                    page.mouse.wheel(amount, 0)
+                elif direction == "left":
+                    page.mouse.wheel(-amount, 0)
+
+                page.wait_for_timeout(500)
+                screenshot = _take_screenshot_safe(page)
+                self._last_screenshot_b64 = screenshot
+
+                return {
+                    "success": True,
+                    "direction": direction,
+                    "amount": amount,
+                    "screenshot": screenshot
+                }
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def hover(self, selector: str) -> dict:
+        """Навести курсор на элемент (для показа скрытых меню)."""
+        if not _playwright_available:
+            return {"success": False, "error": "Playwright не установлен."}
+        try:
+            with _pw_lock:
+                _, _, _, page = _get_pw_page()
+                if page is None:
+                    return {"success": False, "error": "Нет активной страницы."}
+
+                page.hover(selector, timeout=5000)
+                page.wait_for_timeout(500)
+                screenshot = _take_screenshot_safe(page)
+                self._last_screenshot_b64 = screenshot
+
+                return {"success": True, "hovered": selector, "screenshot": screenshot}
+        except Exception as e:
             return {"success": False, "selector": selector, "error": str(e)}
 
-    def select(self, selector: str, value: str, timeout: int = 8000) -> dict:
+    # ══════════════════════════════════════════════════════════════════
+    # ██ JAVASCRIPT И ОЖИДАНИЕ ██
+    # ══════════════════════════════════════════════════════════════════
+
+    def execute_js(self, code: str) -> dict:
+        """Выполнить произвольный JavaScript на текущей странице."""
+        if not _playwright_available:
+            return {"success": False, "error": "Playwright не установлен."}
+        try:
+            with _pw_lock:
+                _, _, _, page = _get_pw_page()
+                if page is None:
+                    return {"success": False, "error": "Нет активной страницы."}
+
+                result = page.evaluate(code)
+                page.wait_for_timeout(300)
+                screenshot = _take_screenshot_safe(page)
+                self._last_screenshot_b64 = screenshot
+
+                return {
+                    "success": True,
+                    "result": str(result)[:10000] if result is not None else None,
+                    "screenshot": screenshot
+                }
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def wait_for(self, selector: str = None, url_contains: str = None,
+                 timeout: int = 15000) -> dict:
         """
-        Выбрать значение из <select> элемента.
-        selector — CSS-селектор <select>
-        value    — значение option (value атрибут или текст)
+        Ждать появления элемента или смены URL.
+        selector — CSS-селектор элемента
+        url_contains — подстрока в URL
         """
         if not _playwright_available:
             return {"success": False, "error": "Playwright не установлен."}
@@ -485,171 +570,670 @@ class BrowserAgent:
             with _pw_lock:
                 _, _, _, page = _get_pw_page()
                 if page is None:
-                    return {"success": False, "error": "Playwright page не инициализирована."}
+                    return {"success": False, "error": "Нет активной страницы."}
 
-                # Пробуем select_option по value, затем по label
-                try:
-                    page.select_option(selector, value=value, timeout=timeout)
-                except Exception:
-                    page.select_option(selector, label=value, timeout=timeout)
+                if selector:
+                    page.wait_for_selector(selector, timeout=timeout)
+                elif url_contains:
+                    page.wait_for_url(f"**{url_contains}**", timeout=timeout)
+                else:
+                    page.wait_for_timeout(timeout)
 
-                page.wait_for_timeout(400)
-                screenshot = base64.b64encode(page.screenshot(full_page=False)).decode("utf-8")
+                screenshot = _take_screenshot_safe(page)
                 self._last_screenshot_b64 = screenshot
 
                 return {
                     "success": True,
-                    "selected": selector,
-                    "value": value,
+                    "url": page.url,
+                    "waited_for": selector or url_contains or f"{timeout}ms",
                     "screenshot": screenshot
+                }
+        except Exception as e:
+            return {"success": False, "error": str(e),
+                    "url": _pw_page.url if _pw_page and not _pw_page.is_closed() else ""}
+
+    def get_elements(self, selector: str, limit: int = 50) -> dict:
+        """Получить список элементов с текстом и атрибутами."""
+        if not _playwright_available:
+            return {"success": False, "error": "Playwright не установлен."}
+        try:
+            with _pw_lock:
+                _, _, _, page = _get_pw_page()
+                if page is None:
+                    return {"success": False, "error": "Нет активной страницы."}
+
+                elements = page.evaluate(f"""(() => {{
+                    const els = document.querySelectorAll('{selector}');
+                    const result = [];
+                    for (let i = 0; i < Math.min(els.length, {limit}); i++) {{
+                        const el = els[i];
+                        result.push({{
+                            tag: el.tagName.toLowerCase(),
+                            text: (el.textContent || '').trim().substring(0, 100),
+                            id: el.id || '',
+                            class: (el.className || '').substring(0, 80),
+                            href: el.getAttribute('href') || '',
+                            value: el.value || '',
+                            type: el.type || '',
+                            name: el.name || '',
+                            st: el.getAttribute('st') || '',
+                            visible: el.offsetParent !== null,
+                            rect: el.getBoundingClientRect()
+                        }});
+                    }}
+                    return result;
+                }})()""")
+
+                return {
+                    "success": True,
+                    "selector": selector,
+                    "count": len(elements),
+                    "elements": elements
                 }
         except Exception as e:
             return {"success": False, "selector": selector, "error": str(e)}
 
-    def detect_login_form(self, url: str = None) -> dict:
+    def screenshot(self) -> dict:
+        """Сделать скриншот текущей страницы."""
+        if not _playwright_available:
+            return {"success": False, "error": "Playwright не установлен."}
+        try:
+            with _pw_lock:
+                _, _, _, page = _get_pw_page()
+                if page is None:
+                    return {"success": False, "error": "Нет активной страницы."}
+
+                screenshot = _take_screenshot_safe(page)
+                self._last_screenshot_b64 = screenshot
+                url = page.url
+                title = ""
+                try:
+                    title = page.title()
+                except Exception:
+                    pass
+
+                return {
+                    "success": True,
+                    "url": url,
+                    "title": title,
+                    "screenshot": screenshot
+                }
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def get_page_info(self) -> dict:
+        """Получить полную информацию о текущей странице."""
+        if not _playwright_available:
+            return {"success": False, "error": "Playwright не установлен."}
+        try:
+            with _pw_lock:
+                _, _, _, page = _get_pw_page()
+                if page is None:
+                    return {"success": False, "error": "Нет активной страницы."}
+
+                info = self._extract_page_info(page)
+                screenshot = _take_screenshot_safe(page)
+                self._last_screenshot_b64 = screenshot
+
+                return {
+                    "success": True,
+                    "url": page.url,
+                    "page_info": info,
+                    "screenshot": screenshot
+                }
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    # ══════════════════════════════════════════════════════════════════
+    # ██ SMART LOGIN — автоматический вход в любой ЛК ██
+    # ══════════════════════════════════════════════════════════════════
+
+    def smart_login(self, url: str, login: str, password: str) -> dict:
         """
-        ПАТЧ ЗАДАЧА-1: browser_ask_auth.
-        Обнаружить форму логина на странице.
-        Возвращает поля формы + скриншот для показа пользователю.
+        Автоматический вход в любой личный кабинет.
+        Пробует несколько стратегий:
+        1. Найти поля по id/name/type и заполнить
+        2. Отправить форму через Enter
+        3. Кликнуть кнопку submit
+        4. JavaScript submit
+        Если не удалось — вернёт ask_user с причиной.
         """
-        if url:
-            nav_result = self.navigate(url)
-            if not nav_result["success"]:
-                return nav_result
-            html = nav_result.get("html", "")
-        else:
-            # Используем текущую страницу
-            if not _playwright_available or _pw_page is None or _pw_page.is_closed():
-                return {"success": False, "error": "Нет активной страницы"}
+        if not _playwright_available:
+            return {"success": False, "error": "Playwright не установлен."}
+
+        try:
+            # Шаг 1: Открыть страницу
+            nav = self.navigate(url)
+            if not nav.get("success"):
+                return nav
+
+            with _pw_lock:
+                _, _, _, page = _get_pw_page()
+                if page is None:
+                    return {"success": False, "error": "Нет активной страницы."}
+
+                url_before = page.url
+
+                # Шаг 2: Найти поле логина (пробуем разные селекторы)
+                login_selectors = [
+                    '#login', '#username', '#email', '#user',
+                    'input[name="login"]', 'input[name="username"]',
+                    'input[name="email"]', 'input[name="user"]',
+                    'input[type="text"]', 'input[type="email"]',
+                    'input[autocomplete="username"]',
+                ]
+                login_filled = False
+                login_selector_used = ""
+                for sel in login_selectors:
+                    try:
+                        el = page.query_selector(sel)
+                        if el and el.is_visible():
+                            page.fill(sel, login, timeout=3000)
+                            _trigger_input_events(page, sel)
+                            login_filled = True
+                            login_selector_used = sel
+                            break
+                    except Exception:
+                        continue
+
+                if not login_filled:
+                    return {
+                        "success": False,
+                        "error": "Не удалось найти поле логина",
+                        "need_user_takeover": True,
+                        "reason": "captcha_or_unusual_form",
+                        "screenshot": _take_screenshot_safe(page),
+                        "url": page.url
+                    }
+
+                page.wait_for_timeout(300)
+
+                # Шаг 3: Найти поле пароля
+                password_selectors = [
+                    '#password', '#pass', '#passwd',
+                    'input[name="password"]', 'input[name="pass"]',
+                    'input[name="passwd"]',
+                    'input[type="password"]',
+                ]
+                password_filled = False
+                password_selector_used = ""
+                for sel in password_selectors:
+                    try:
+                        el = page.query_selector(sel)
+                        if el and el.is_visible():
+                            page.fill(sel, password, timeout=3000)
+                            _trigger_input_events(page, sel)
+                            password_filled = True
+                            password_selector_used = sel
+                            break
+                    except Exception:
+                        continue
+
+                if not password_filled:
+                    return {
+                        "success": False,
+                        "error": "Не удалось найти поле пароля",
+                        "need_user_takeover": True,
+                        "reason": "password_field_not_found",
+                        "screenshot": _take_screenshot_safe(page),
+                        "url": page.url
+                    }
+
+                page.wait_for_timeout(300)
+
+                # Шаг 4: Отправить форму (несколько стратегий)
+                submitted = False
+
+                # 4a: Нажать Enter в поле пароля
+                try:
+                    page.click(password_selector_used, timeout=2000)
+                    page.keyboard.press("Enter")
+                    try:
+                        page.wait_for_load_state("networkidle", timeout=12000)
+                    except Exception:
+                        page.wait_for_timeout(5000)
+                    if page.url != url_before:
+                        submitted = True
+                except Exception:
+                    pass
+
+                # 4b: Кликнуть submit кнопку
+                if not submitted:
+                    submit_selectors = [
+                        'button[type="submit"]', 'input[type="submit"]',
+                        'button:has-text("Войти")', 'button:has-text("Login")',
+                        'button:has-text("Sign in")', 'button:has-text("Вход")',
+                        '.login-btn', '.submit-btn', '#login-btn',
+                    ]
+                    for sel in submit_selectors:
+                        try:
+                            el = page.query_selector(sel)
+                            if el and el.is_visible():
+                                el.click()
+                                try:
+                                    page.wait_for_load_state("networkidle", timeout=12000)
+                                except Exception:
+                                    page.wait_for_timeout(5000)
+                                if page.url != url_before:
+                                    submitted = True
+                                    break
+                        except Exception:
+                            continue
+
+                # 4c: JavaScript submit
+                if not submitted:
+                    try:
+                        page.evaluate("document.querySelector('form').submit()")
+                        try:
+                            page.wait_for_load_state("networkidle", timeout=12000)
+                        except Exception:
+                            page.wait_for_timeout(5000)
+                        if page.url != url_before:
+                            submitted = True
+                    except Exception:
+                        pass
+
+                page.wait_for_timeout(1000)
+                screenshot = _take_screenshot_safe(page)
+                self._last_screenshot_b64 = screenshot
+                url_after = page.url
+
+                # Проверяем результат
+                login_success = url_after != url_before
+                # Дополнительная проверка: ищем признаки успешного входа
+                if not login_success:
+                    try:
+                        body_text = page.evaluate("document.body.innerText.substring(0, 1000)")
+                        # Если на странице есть ошибка авторизации
+                        error_patterns = ["неверн", "invalid", "incorrect", "wrong", "ошибк", "error"]
+                        has_error = any(p in body_text.lower() for p in error_patterns)
+                        # Проверяем наличие капчи
+                        has_captcha = page.evaluate("""!!document.querySelector(
+                            '[class*="captcha"], [id*="captcha"], iframe[src*="recaptcha"], iframe[src*="hcaptcha"]'
+                        )""")
+                        if has_captcha:
+                            return {
+                                "success": False,
+                                "error": "Обнаружена CAPTCHA. Требуется ввод пользователя.",
+                                "need_user_takeover": True,
+                                "reason": "captcha",
+                                "screenshot": screenshot,
+                                "url": url_after
+                            }
+                        if has_error:
+                            return {
+                                "success": False,
+                                "error": "Неверный логин или пароль",
+                                "screenshot": screenshot,
+                                "url": url_after
+                            }
+                    except Exception:
+                        pass
+
+                return {
+                    "success": login_success,
+                    "url_before": url_before,
+                    "url_after": url_after,
+                    "navigated": login_success,
+                    "login_selector": login_selector_used,
+                    "password_selector": password_selector_used,
+                    "screenshot": screenshot,
+                    "need_user_takeover": not login_success,
+                    "reason": "login_failed" if not login_success else None
+                }
+
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    # ══════════════════════════════════════════════════════════════════
+    # ██ ПЕРЕДАЧА УПРАВЛЕНИЯ ПОЛЬЗОВАТЕЛЮ (TAKEOVER) ██
+    # ══════════════════════════════════════════════════════════════════
+
+    def ask_user(self, reason: str, instruction: str = "") -> dict:
+        """
+        Передать управление браузером пользователю.
+
+        Механизм работы:
+        1. Делает скриншот текущей страницы
+        2. Сохраняет скриншот как файл (для показа в чате)
+        3. Возвращает специальный event type="browser_takeover_request"
+        4. Фронтенд показывает скриншот + инструкцию + кнопку "Готово"
+        5. Пользователь может:
+           a) Ввести логин/пароль прямо в чат → агент заполнит
+           b) Нажать "Открыть браузер" → noVNC iframe → сам вводит
+           c) Просто нажать "Готово" когда закончил
+
+        reason: причина запроса (captcha, 2fa, login_failed, unusual_form)
+        instruction: что пользователь должен сделать
+        """
+        screenshot = ""
+        url = ""
+        page_title = ""
+
+        if _playwright_available and _pw_page and not _pw_page.is_closed():
             try:
                 with _pw_lock:
-                    html = _pw_page.content()
-            except Exception as e:
-                return {"success": False, "error": str(e)}
-
-        # Парсим форму логина из HTML
-        fields = []
-        login_patterns = [
-            r'<input[^>]+type=["\']text["\'][^>]*name=["\']([^"\']+)["\'][^>]*>',
-            r'<input[^>]+name=["\']([^"\']+)["\'][^>]*type=["\']text["\'][^>]*>',
-            r'<input[^>]+type=["\']email["\'][^>]*name=["\']([^"\']+)["\'][^>]*>',
-            r'<input[^>]+name=["\']([^"\']+)["\'][^>]*type=["\']email["\'][^>]*>',
-        ]
-        password_patterns = [
-            r'<input[^>]+type=["\']password["\'][^>]*name=["\']([^"\']+)["\'][^>]*>',
-            r'<input[^>]+name=["\']([^"\']+)["\'][^>]*type=["\']password["\'][^>]*>',
-        ]
-
-        for pat in login_patterns:
-            for m in re.finditer(pat, html, re.IGNORECASE):
-                name = m.group(1)
-                if name not in [f["name"] for f in fields]:
-                    fields.append({"name": name, "type": "text", "selector": f'input[name="{name}"]'})
-                    break
-
-        for pat in password_patterns:
-            for m in re.finditer(pat, html, re.IGNORECASE):
-                name = m.group(1)
-                if name not in [f["name"] for f in fields]:
-                    fields.append({"name": name, "type": "password", "selector": f'input[name="{name}"]'})
-                    break
-
-        # Найти action формы
-        form_action = ""
-        form_match = re.search(r'<form[^>]+action=["\']([^"\']*)["\']', html, re.IGNORECASE)
-        if form_match:
-            form_action = form_match.group(1)
-
-        # Найти submit кнопку
-        submit_selector = None
-        submit_patterns = [
-            r'<input[^>]+type=["\']submit["\'][^>]*>',
-            r'<button[^>]+type=["\']submit["\'][^>]*>',
-            r'<button[^>]*>[^<]*(войти|login|sign in|вход|submit)[^<]*</button>',
-        ]
-        for pat in submit_patterns:
-            if re.search(pat, html, re.IGNORECASE):
-                submit_selector = 'input[type="submit"], button[type="submit"], button'
-                break
-
-        screenshot = self._last_screenshot_b64 or _screenshot_current_page()
-        current_url = url or (self._current_url or "")
-        if _pw_page and not _pw_page.is_closed():
-            try:
-                current_url = _pw_page.url
+                    screenshot = _take_screenshot_safe(_pw_page)
+                    url = _pw_page.url
+                    page_title = _pw_page.title()
             except Exception:
                 pass
 
-        is_login_page = bool(fields) and any(f["type"] == "password" for f in fields)
+        # Сохраняем скриншот как файл для показа в чате
+        screenshot_url = ""
+        if screenshot:
+            try:
+                filename = f"takeover_{uuid.uuid4().hex[:8]}.png"
+                filepath = os.path.join(self._screenshot_dir, filename)
+                with open(filepath, "wb") as f:
+                    f.write(base64.b64decode(screenshot))
+                screenshot_url = f"/static/screenshots/{filename}"
+            except Exception:
+                pass
+
+        # Формируем сообщения в зависимости от причины
+        messages = {
+            "captcha": "🔒 Обнаружена CAPTCHA. Пожалуйста, решите её и нажмите 'Готово'.",
+            "2fa": "🔐 Требуется двухфакторная аутентификация. Введите код и нажмите 'Готово'.",
+            "login_failed": "🔑 Не удалось войти автоматически. Пожалуйста, войдите вручную и нажмите 'Готово'.",
+            "unusual_form": "⚠️ Необычная форма входа. Пожалуйста, заполните её и нажмите 'Готово'.",
+            "confirmation": "✅ Требуется подтверждение действия. Проверьте и нажмите 'Готово'.",
+            "custom": instruction or "Требуется ваше участие. Выполните действие и нажмите 'Готово'."
+        }
+
+        message = messages.get(reason, messages["custom"])
+        if instruction and reason != "custom":
+            message += f"\n\n📋 {instruction}"
+
+        self._last_screenshot_b64 = screenshot
 
         return {
             "success": True,
-            "is_login_form": is_login_page,
-            "url": current_url,
-            "fields": fields,
-            "form_action": form_action,
-            "submit_selector": submit_selector or 'button[type="submit"]',
+            "type": "browser_takeover_request",
+            "reason": reason,
+            "message": message,
+            "instruction": instruction,
+            "url": url,
+            "page_title": page_title,
             "screenshot": screenshot,
-            "fields_count": len(fields)
+            "screenshot_url": screenshot_url,
+            "actions": [
+                {"id": "credentials", "label": "🔑 Ввести логин/пароль", "type": "input"},
+                {"id": "manual", "label": "🖥️ Открыть браузер", "type": "vnc"},
+                {"id": "done", "label": "✅ Готово", "type": "confirm"},
+                {"id": "skip", "label": "⏭️ Пропустить", "type": "skip"}
+            ]
         }
 
+    def takeover_done(self) -> dict:
+        """
+        Вызывается после того как пользователь закончил ручной ввод.
+        Делает скриншот и возвращает текущее состояние страницы.
+        """
+        if not _playwright_available:
+            return {"success": False, "error": "Playwright не установлен."}
+        try:
+            with _pw_lock:
+                _, _, _, page = _get_pw_page()
+                if page is None:
+                    return {"success": False, "error": "Нет активной страницы."}
+
+                # Ждём стабилизации после действий пользователя
+                try:
+                    page.wait_for_load_state("networkidle", timeout=5000)
+                except Exception:
+                    page.wait_for_timeout(2000)
+
+                screenshot = _take_screenshot_safe(page)
+                self._last_screenshot_b64 = screenshot
+                info = self._extract_page_info(page)
+
+                return {
+                    "success": True,
+                    "url": page.url,
+                    "title": page.title(),
+                    "page_info": info,
+                    "screenshot": screenshot
+                }
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
     # ══════════════════════════════════════════════════════════════════
-    # ██ ЗАДАЧА-1: FTP ИНСТРУМЕНТЫ (ftplib) ██
+    # ██ SELECT / DROPDOWN ██
     # ══════════════════════════════════════════════════════════════════
 
-    def ftp_upload(self, host: str, username: str, password: str,
-                   remote_path: str, content: str,
-                   port: int = 21, encoding: str = "utf-8") -> dict:
+    def select_option(self, selector: str, value: str, timeout: int = 8000) -> dict:
         """
-        Загрузить файл на FTP сервер через ftplib.
-        Работает с паролями содержащими спецсимволы (#, @, ! и т.д.).
+        Выбрать значение из dropdown.
+        Работает с нативным <select> и Vuetify/Material UI dropdowns.
         """
+        if not _playwright_available:
+            return {"success": False, "error": "Playwright не установлен."}
+        try:
+            with _pw_lock:
+                _, _, _, page = _get_pw_page()
+                if page is None:
+                    return {"success": False, "error": "Нет активной страницы."}
+
+                selected = False
+                error_msg = ""
+
+                # Стратегия 1: Нативный <select>
+                try:
+                    tag = page.evaluate(f"document.querySelector('{selector}')?.tagName?.toLowerCase()")
+                    if tag == "select":
+                        try:
+                            page.select_option(selector, value=value, timeout=timeout)
+                            selected = True
+                        except Exception:
+                            page.select_option(selector, label=value, timeout=timeout)
+                            selected = True
+                except Exception as e1:
+                    error_msg = str(e1)
+
+                # Стратегия 2: Vuetify/Material dropdown (click + выбор из списка)
+                if not selected:
+                    try:
+                        page.click(selector, timeout=3000)
+                        page.wait_for_timeout(500)
+                        # Ищем опцию в открытом dropdown
+                        option_selectors = [
+                            f'.v-list-item:has-text("{value}")',
+                            f'.v-menu__content .v-list-item:has-text("{value}")',
+                            f'[role="option"]:has-text("{value}")',
+                            f'.dropdown-item:has-text("{value}")',
+                            f'li:has-text("{value}")',
+                        ]
+                        for opt_sel in option_selectors:
+                            try:
+                                el = page.query_selector(opt_sel)
+                                if el and el.is_visible():
+                                    el.click()
+                                    selected = True
+                                    break
+                            except Exception:
+                                continue
+                    except Exception as e2:
+                        error_msg += f" | vuetify: {e2}"
+
+                page.wait_for_timeout(400)
+                screenshot = _take_screenshot_safe(page)
+                self._last_screenshot_b64 = screenshot
+
+                return {
+                    "success": selected,
+                    "selector": selector,
+                    "value": value,
+                    "screenshot": screenshot,
+                    "error": error_msg if not selected else None
+                }
+        except Exception as e:
+            return {"success": False, "selector": selector, "error": str(e)}
+
+    # ══════════════════════════════════════════════════════════════════
+    # ██ LEGACY МЕТОДЫ (совместимость) ██
+    # ══════════════════════════════════════════════════════════════════
+
+    def check_site(self, url):
+        """Check if a website is accessible."""
+        result = self.navigate(url)
+        if not result.get("success"):
+            return result
+        return {
+            "success": True,
+            "url": result.get("url", url),
+            "status_code": result.get("status_code", 200),
+            "title": result.get("title", ""),
+            "screenshot": result.get("screenshot")
+        }
+
+    def check_api(self, url, method="GET", data=None, headers=None):
+        """Check an API endpoint."""
+        try:
+            if not url.startswith(("http://", "https://")):
+                url = "https://" + url
+            extra_headers = {"Content-Type": "application/json"}
+            if headers:
+                extra_headers.update(headers)
+            start = time.time()
+            if method.upper() == "GET":
+                resp = self.session.get(url, headers=extra_headers, timeout=self.timeout, verify=False)
+            elif method.upper() == "POST":
+                resp = self.session.post(url, json=data, headers=extra_headers, timeout=self.timeout, verify=False)
+            elif method.upper() == "PUT":
+                resp = self.session.put(url, json=data, headers=extra_headers, timeout=self.timeout, verify=False)
+            elif method.upper() == "DELETE":
+                resp = self.session.delete(url, headers=extra_headers, timeout=self.timeout, verify=False)
+            else:
+                return {"success": False, "error": f"Unsupported method: {method}"}
+            elapsed = round((time.time() - start) * 1000)
+            try:
+                json_response = resp.json()
+            except Exception:
+                json_response = None
+            return {
+                "success": True, "url": resp.url, "method": method.upper(),
+                "status_code": resp.status_code, "response_time_ms": elapsed,
+                "json": json_response,
+                "text": resp.text[:20000] if not json_response else None,
+                "headers": dict(resp.headers)
+            }
+        except Exception as e:
+            return {"success": False, "url": url, "error": str(e)}
+
+    def get_text(self, url):
+        """Get clean text content from a webpage."""
+        result = self.navigate(url)
+        if not result.get("success"):
+            return result
+        try:
+            with _pw_lock:
+                if _pw_page and not _pw_page.is_closed():
+                    text = _pw_page.evaluate("document.body.innerText")
+                    if len(text) > 20000:
+                        text = text[:20000] + "... [truncated]"
+                    return {
+                        "success": True, "url": result.get("url", url),
+                        "text": text, "screenshot": result.get("screenshot")
+                    }
+        except Exception:
+            pass
+        return result
+
+    def get_links(self, url):
+        """Extract all links from a webpage."""
+        result = self.navigate(url)
+        if not result.get("success"):
+            return result
+        try:
+            with _pw_lock:
+                if _pw_page and not _pw_page.is_closed():
+                    links = _pw_page.evaluate("""() => {
+                        return Array.from(document.querySelectorAll('a[href]'))
+                            .map(a => ({text: a.textContent.trim().substring(0, 50), href: a.href}))
+                            .filter(l => l.href && !l.href.startsWith('javascript:'))
+                            .slice(0, 200);
+                    }""")
+                    return {
+                        "success": True, "url": result.get("url", url),
+                        "links": links, "count": len(links),
+                        "screenshot": result.get("screenshot")
+                    }
+        except Exception:
+            pass
+        return result
+
+    def post_data(self, url, data=None, json_data=None, headers=None):
+        """Send POST request."""
+        try:
+            if not url.startswith(("http://", "https://")):
+                url = "https://" + url
+            resp = self.session.post(
+                url, data=data, json=json_data,
+                headers=headers or {}, timeout=self.timeout, verify=False
+            )
+            return {
+                "success": True, "url": resp.url,
+                "status_code": resp.status_code,
+                "response": resp.text[:50000]
+            }
+        except Exception as e:
+            return {"success": False, "url": url, "error": str(e)}
+
+    def screenshot_check(self, url):
+        """Check visual aspects of a site + screenshot."""
+        return self.navigate(url)
+
+    def detect_login_form(self, url=None):
+        """Detect login form on page."""
+        if url:
+            self.navigate(url)
+        return self.get_page_info()
+
+    def submit(self, selector=None, timeout=10000):
+        """Submit a form."""
+        if selector:
+            return self.click(selector, timeout)
+        else:
+            return self.press_key("Enter")
+
+    def select(self, selector, value, timeout=8000):
+        """Legacy select method."""
+        return self.select_option(selector, value, timeout)
+
+    # ══════════════════════════════════════════════════════════════════
+    # ██ FTP ИНСТРУМЕНТЫ ██
+    # ══════════════════════════════════════════════════════════════════
+
+    def ftp_upload(self, host, username, password, remote_path, content,
+                   port=21, encoding="utf-8"):
+        """Загрузить файл на FTP сервер."""
         try:
             ftp = ftplib.FTP()
             ftp.connect(host, port, timeout=30)
             ftp.login(username, password)
-
-            # Создать директории если нужно
             remote_dir = "/".join(remote_path.split("/")[:-1])
             if remote_dir and remote_dir != "/":
                 self._ftp_makedirs(ftp, remote_dir)
-
-            # Загрузить файл
             content_bytes = content.encode(encoding) if isinstance(content, str) else content
             ftp.storbinary(f"STOR {remote_path}", io.BytesIO(content_bytes))
-
             size = len(content_bytes)
             ftp.quit()
-
-            return {
-                "success": True,
-                "host": host,
-                "remote_path": remote_path,
-                "size_bytes": size,
-                "message": f"Файл успешно загружен: {remote_path} ({size} байт)"
-            }
-        except ftplib.error_perm as e:
-            return {"success": False, "error": f"FTP permission error: {e}", "host": host, "path": remote_path}
+            return {"success": True, "host": host, "remote_path": remote_path,
+                    "size_bytes": size, "message": f"Файл загружен: {remote_path} ({size} байт)"}
         except Exception as e:
             return {"success": False, "error": str(e), "host": host, "path": remote_path}
 
-    def ftp_download(self, host: str, username: str, password: str,
-                     remote_path: str, port: int = 21) -> dict:
-        """
-        Скачать файл с FTP сервера.
-        Возвращает содержимое файла как строку.
-        """
+    def ftp_download(self, host, username, password, remote_path, port=21):
+        """Скачать файл с FTP сервера."""
         try:
             ftp = ftplib.FTP()
             ftp.connect(host, port, timeout=30)
             ftp.login(username, password)
-
             buf = io.BytesIO()
             ftp.retrbinary(f"RETR {remote_path}", buf.write)
             ftp.quit()
-
             content_bytes = buf.getvalue()
-            # Пробуем декодировать как текст
             try:
                 content = content_bytes.decode("utf-8")
             except UnicodeDecodeError:
@@ -657,60 +1241,35 @@ class BrowserAgent:
                     content = content_bytes.decode("cp1251")
                 except Exception:
                     content = base64.b64encode(content_bytes).decode("ascii")
-
-            return {
-                "success": True,
-                "host": host,
-                "remote_path": remote_path,
-                "size_bytes": len(content_bytes),
-                "content": content[:100000]  # Лимит 100KB
-            }
-        except ftplib.error_perm as e:
-            return {"success": False, "error": f"FTP permission error: {e}", "host": host, "path": remote_path}
+            return {"success": True, "host": host, "remote_path": remote_path,
+                    "size_bytes": len(content_bytes), "content": content[:100000]}
         except Exception as e:
             return {"success": False, "error": str(e), "host": host, "path": remote_path}
 
-    def ftp_list(self, host: str, username: str, password: str,
-                 remote_path: str = "/", port: int = 21) -> dict:
-        """
-        Список файлов в директории на FTP сервере.
-        """
+    def ftp_list(self, host, username, password, remote_path="/", port=21):
+        """Список файлов на FTP."""
         try:
             ftp = ftplib.FTP()
             ftp.connect(host, port, timeout=30)
             ftp.login(username, password)
-
             items = []
             ftp.retrlines(f"LIST {remote_path}", items.append)
             ftp.quit()
-
-            # Парсим вывод LIST
             parsed = []
             for line in items:
                 parts = line.split(None, 8)
                 if len(parts) >= 9:
-                    parsed.append({
-                        "permissions": parts[0],
-                        "size": parts[4],
-                        "name": parts[8],
-                        "is_dir": parts[0].startswith("d")
-                    })
+                    parsed.append({"permissions": parts[0], "size": parts[4],
+                                   "name": parts[8], "is_dir": parts[0].startswith("d")})
                 else:
-                    parsed.append({"raw": line, "is_dir": line.startswith("d")})
-
-            return {
-                "success": True,
-                "host": host,
-                "path": remote_path,
-                "files": parsed,
-                "count": len(parsed)
-            }
+                    parsed.append({"raw": line})
+            return {"success": True, "host": host, "path": remote_path,
+                    "files": parsed, "count": len(parsed)}
         except Exception as e:
             return {"success": False, "error": str(e), "host": host, "path": remote_path}
 
-    def ftp_delete(self, host: str, username: str, password: str,
-                   remote_path: str, port: int = 21) -> dict:
-        """Удалить файл на FTP сервере."""
+    def ftp_delete(self, host, username, password, remote_path, port=21):
+        """Удалить файл на FTP."""
         try:
             ftp = ftplib.FTP()
             ftp.connect(host, port, timeout=30)
@@ -721,7 +1280,7 @@ class BrowserAgent:
         except Exception as e:
             return {"success": False, "error": str(e), "path": remote_path}
 
-    def _ftp_makedirs(self, ftp: ftplib.FTP, remote_dir: str):
+    def _ftp_makedirs(self, ftp, remote_dir):
         """Рекурсивно создать директории на FTP."""
         dirs = remote_dir.strip("/").split("/")
         current = ""
@@ -732,4 +1291,4 @@ class BrowserAgent:
             try:
                 ftp.mkd(current)
             except ftplib.error_perm:
-                pass  # Директория уже существует
+                pass
