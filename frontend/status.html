@@ -1,0 +1,842 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>🖥️ Server Status — asmksm58.beget.tech</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link href="https://unpkg.com/aos@2.3.1/dist/aos.css" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    :root {
+      --bg-primary: #0a0e1a;
+      --bg-card: #0f1629;
+      --bg-card2: #131b2e;
+      --accent-blue: #3b82f6;
+      --accent-cyan: #06b6d4;
+      --accent-green: #10b981;
+      --accent-red: #ef4444;
+      --accent-yellow: #f59e0b;
+      --accent-purple: #8b5cf6;
+      --text-primary: #e2e8f0;
+      --text-secondary: #94a3b8;
+      --border: rgba(59,130,246,0.15);
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    /* Animated background */
+    body::before {
+      content: '';
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background:
+        radial-gradient(ellipse at 20% 20%, rgba(59,130,246,0.08) 0%, transparent 50%),
+        radial-gradient(ellipse at 80% 80%, rgba(139,92,246,0.06) 0%, transparent 50%),
+        radial-gradient(ellipse at 50% 50%, rgba(6,182,212,0.04) 0%, transparent 60%);
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    .container { position: relative; z-index: 1; }
+
+    /* Grid lines background */
+    .grid-bg {
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background-image:
+        linear-gradient(rgba(59,130,246,0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(59,130,246,0.03) 1px, transparent 1px);
+      background-size: 50px 50px;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    /* Header */
+    .header {
+      background: linear-gradient(135deg, rgba(15,22,41,0.95) 0%, rgba(19,27,46,0.95) 100%);
+      border-bottom: 1px solid var(--border);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+
+    /* Cards */
+    .card {
+      background: linear-gradient(135deg, var(--bg-card) 0%, var(--bg-card2) 100%);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 24px;
+      transition: all 0.3s ease;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .card::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, rgba(59,130,246,0.4), transparent);
+    }
+
+    .card:hover {
+      border-color: rgba(59,130,246,0.3);
+      transform: translateY(-2px);
+      box-shadow: 0 20px 40px rgba(0,0,0,0.4), 0 0 0 1px rgba(59,130,246,0.1);
+    }
+
+    /* Metric cards */
+    .metric-card {
+      background: linear-gradient(135deg, var(--bg-card) 0%, var(--bg-card2) 100%);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 20px;
+      transition: all 0.3s ease;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .metric-card:hover {
+      transform: translateY(-3px);
+      box-shadow: 0 20px 40px rgba(0,0,0,0.5);
+    }
+
+    /* Progress bars */
+    .progress-bar {
+      height: 8px;
+      background: rgba(255,255,255,0.05);
+      border-radius: 999px;
+      overflow: hidden;
+      margin-top: 8px;
+    }
+
+    .progress-fill {
+      height: 100%;
+      border-radius: 999px;
+      transition: width 1s ease;
+      position: relative;
+    }
+
+    .progress-fill::after {
+      content: '';
+      position: absolute;
+      top: 0; right: 0;
+      width: 20px; height: 100%;
+      background: rgba(255,255,255,0.3);
+      border-radius: 999px;
+      filter: blur(4px);
+    }
+
+    /* Status badges */
+    .badge-running {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 12px;
+      background: rgba(16,185,129,0.15);
+      border: 1px solid rgba(16,185,129,0.3);
+      border-radius: 999px;
+      color: #10b981;
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .badge-stopped {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 12px;
+      background: rgba(239,68,68,0.15);
+      border: 1px solid rgba(239,68,68,0.3);
+      border-radius: 999px;
+      color: #ef4444;
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .badge-unknown {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 12px;
+      background: rgba(245,158,11,0.15);
+      border: 1px solid rgba(245,158,11,0.3);
+      border-radius: 999px;
+      color: #f59e0b;
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    /* Pulse dot */
+    .pulse-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      display: inline-block;
+      position: relative;
+    }
+
+    .pulse-dot.green {
+      background: #10b981;
+      box-shadow: 0 0 0 0 rgba(16,185,129,0.4);
+      animation: pulse-green 2s infinite;
+    }
+
+    .pulse-dot.red {
+      background: #ef4444;
+    }
+
+    .pulse-dot.yellow {
+      background: #f59e0b;
+      box-shadow: 0 0 0 0 rgba(245,158,11,0.4);
+      animation: pulse-yellow 2s infinite;
+    }
+
+    @keyframes pulse-green {
+      0% { box-shadow: 0 0 0 0 rgba(16,185,129,0.4); }
+      70% { box-shadow: 0 0 0 8px rgba(16,185,129,0); }
+      100% { box-shadow: 0 0 0 0 rgba(16,185,129,0); }
+    }
+
+    @keyframes pulse-yellow {
+      0% { box-shadow: 0 0 0 0 rgba(245,158,11,0.4); }
+      70% { box-shadow: 0 0 0 8px rgba(245,158,11,0); }
+      100% { box-shadow: 0 0 0 0 rgba(245,158,11,0); }
+    }
+
+    /* Cron log */
+    .log-entry {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 13px;
+      padding: 10px 14px;
+      background: rgba(0,0,0,0.3);
+      border-radius: 8px;
+      border-left: 3px solid var(--accent-blue);
+      color: #94a3b8;
+      transition: all 0.2s;
+    }
+
+    .log-entry:hover {
+      background: rgba(59,130,246,0.05);
+      color: var(--text-primary);
+      border-left-color: var(--accent-cyan);
+    }
+
+    .log-entry .timestamp {
+      color: var(--accent-cyan);
+      font-weight: 600;
+    }
+
+    /* Countdown */
+    .countdown-ring {
+      width: 48px; height: 48px;
+      position: relative;
+    }
+
+    .countdown-ring svg {
+      transform: rotate(-90deg);
+    }
+
+    .countdown-ring circle {
+      fill: none;
+      stroke-width: 3;
+    }
+
+    .countdown-ring .bg-circle {
+      stroke: rgba(59,130,246,0.15);
+    }
+
+    .countdown-ring .progress-circle {
+      stroke: var(--accent-blue);
+      stroke-linecap: round;
+      transition: stroke-dashoffset 1s linear;
+    }
+
+    .countdown-text {
+      position: absolute;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--accent-blue);
+    }
+
+    /* Section titles */
+    .section-title {
+      font-size: 13px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--text-secondary);
+      margin-bottom: 16px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .section-title::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background: var(--border);
+    }
+
+    /* Big number */
+    .big-number {
+      font-size: 36px;
+      font-weight: 800;
+      line-height: 1;
+      background: linear-gradient(135deg, #e2e8f0, #94a3b8);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    /* Service row */
+    .service-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 16px;
+      background: rgba(0,0,0,0.2);
+      border-radius: 12px;
+      border: 1px solid rgba(255,255,255,0.04);
+      transition: all 0.2s;
+    }
+
+    .service-row:hover {
+      background: rgba(59,130,246,0.05);
+      border-color: rgba(59,130,246,0.15);
+    }
+
+    /* Glow effects */
+    .glow-blue { box-shadow: 0 0 20px rgba(59,130,246,0.15); }
+    .glow-green { box-shadow: 0 0 20px rgba(16,185,129,0.15); }
+    .glow-red { box-shadow: 0 0 20px rgba(239,68,68,0.15); }
+
+    /* Animations */
+    @keyframes fadeInUp {
+      from { opacity: 0; transform: translateY(20px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    @keyframes spin {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
+
+    .spin { animation: spin 1s linear infinite; }
+
+    /* Loading state */
+    .loading-shimmer {
+      background: linear-gradient(90deg, rgba(255,255,255,0.03) 25%, rgba(255,255,255,0.07) 50%, rgba(255,255,255,0.03) 75%);
+      background-size: 200% 100%;
+      animation: shimmer 1.5s infinite;
+    }
+
+    @keyframes shimmer {
+      0% { background-position: -200% 0; }
+      100% { background-position: 200% 0; }
+    }
+
+    /* Toast notification */
+    .toast {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      padding: 12px 20px;
+      background: rgba(15,22,41,0.95);
+      border: 1px solid rgba(59,130,246,0.3);
+      border-radius: 12px;
+      backdrop-filter: blur(20px);
+      font-size: 13px;
+      color: var(--text-primary);
+      z-index: 1000;
+      transform: translateY(100px);
+      opacity: 0;
+      transition: all 0.3s ease;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .toast.show {
+      transform: translateY(0);
+      opacity: 1;
+    }
+
+    /* Scrollbar */
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: var(--bg-primary); }
+    ::-webkit-scrollbar-thumb { background: rgba(59,130,246,0.3); border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: rgba(59,130,246,0.5); }
+
+    /* Responsive */
+    @media (max-width: 768px) {
+      .card, .metric-card { padding: 16px; }
+      .big-number { font-size: 28px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="grid-bg"></div>
+
+  <!-- Header -->
+  <header class="header">
+    <div class="container max-w-7xl mx-auto px-4 sm:px-6 py-4">
+      <div class="flex items-center justify-between">
+        <div class="flex items-center gap-3">
+          <div class="w-9 h-9 rounded-xl bg-gradient-to-br from-blue-500 to-cyan-500 flex items-center justify-center text-lg">
+            🖥️
+          </div>
+          <div>
+            <h1 class="text-base font-bold text-white">Server Monitor</h1>
+            <p class="text-xs text-slate-400 font-mono">asmksm58.beget.tech · 2.56.240.170</p>
+          </div>
+        </div>
+
+        <div class="flex items-center gap-4">
+          <!-- Last update -->
+          <div class="hidden sm:flex flex-col items-end">
+            <span class="text-xs text-slate-500">Последнее обновление</span>
+            <span id="last-update" class="text-xs font-mono text-slate-300">—</span>
+          </div>
+
+          <!-- Countdown ring -->
+          <div class="flex flex-col items-center gap-1">
+            <div class="countdown-ring">
+              <svg width="48" height="48" viewBox="0 0 48 48">
+                <circle class="bg-circle" cx="24" cy="24" r="20"/>
+                <circle class="progress-circle" id="countdown-circle" cx="24" cy="24" r="20"
+                  stroke-dasharray="125.66"
+                  stroke-dashoffset="0"/>
+              </svg>
+              <span class="countdown-text" id="countdown-text">30</span>
+            </div>
+            <span class="text-xs text-slate-500">сек</span>
+          </div>
+
+          <!-- Refresh button -->
+          <button onclick="fetchStatus()" id="refresh-btn"
+            class="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-xl transition-all duration-200 hover:shadow-lg hover:shadow-blue-500/25">
+            <span id="refresh-icon">↻</span>
+            <span class="hidden sm:inline">Обновить</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main content -->
+  <main class="container max-w-7xl mx-auto px-4 sm:px-6 py-8">
+
+    <!-- Status banner -->
+    <div id="status-banner" class="card mb-6 flex items-center justify-between" data-aos="fade-down">
+      <div class="flex items-center gap-3">
+        <div id="overall-icon" class="text-3xl">⏳</div>
+        <div>
+          <h2 id="overall-status" class="text-lg font-bold text-white">Загрузка данных...</h2>
+          <p id="overall-desc" class="text-sm text-slate-400">Подключение к серверу</p>
+        </div>
+      </div>
+      <div class="text-right hidden sm:block">
+        <div class="text-xs text-slate-500 mb-1">Сервер работает</div>
+        <div id="uptime-display" class="text-sm font-mono font-semibold text-blue-400">—</div>
+      </div>
+    </div>
+
+    <!-- Metrics row -->
+    <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
+
+      <!-- CPU -->
+      <div class="metric-card" data-aos="fade-up" data-aos-delay="0">
+        <div class="flex items-center justify-between mb-3">
+          <div class="flex items-center gap-2">
+            <div class="w-8 h-8 rounded-lg bg-blue-500/10 flex items-center justify-center text-base">⚡</div>
+            <span class="text-sm font-semibold text-slate-300">CPU</span>
+          </div>
+          <span id="cpu-cores" class="text-xs text-slate-500 font-mono">— ядер</span>
+        </div>
+        <div class="big-number" id="cpu-percent">—%</div>
+        <div class="text-xs text-slate-500 mt-1" id="cpu-load">Load: — — —</div>
+        <div class="progress-bar mt-3">
+          <div class="progress-fill" id="cpu-bar" style="width:0%; background: linear-gradient(90deg, #3b82f6, #06b6d4);"></div>
+        </div>
+      </div>
+
+      <!-- RAM -->
+      <div class="metric-card" data-aos="fade-up" data-aos-delay="100">
+        <div class="flex items-center justify-between mb-3">
+          <div class="flex items-center gap-2">
+            <div class="w-8 h-8 rounded-lg bg-purple-500/10 flex items-center justify-center text-base">🧠</div>
+            <span class="text-sm font-semibold text-slate-300">RAM</span>
+          </div>
+          <span id="ram-total" class="text-xs text-slate-500 font-mono">— MB</span>
+        </div>
+        <div class="big-number" id="ram-percent">—%</div>
+        <div class="text-xs text-slate-500 mt-1" id="ram-detail">Used: — / —</div>
+        <div class="progress-bar mt-3">
+          <div class="progress-fill" id="ram-bar" style="width:0%; background: linear-gradient(90deg, #8b5cf6, #ec4899);"></div>
+        </div>
+      </div>
+
+      <!-- Disk -->
+      <div class="metric-card" data-aos="fade-up" data-aos-delay="200">
+        <div class="flex items-center justify-between mb-3">
+          <div class="flex items-center gap-2">
+            <div class="w-8 h-8 rounded-lg bg-cyan-500/10 flex items-center justify-center text-base">💾</div>
+            <span class="text-sm font-semibold text-slate-300">Диск</span>
+          </div>
+          <span id="disk-total" class="text-xs text-slate-500 font-mono">— GB</span>
+        </div>
+        <div class="big-number" id="disk-percent">—%</div>
+        <div class="text-xs text-slate-500 mt-1" id="disk-detail">Used: — / —</div>
+        <div class="progress-bar mt-3">
+          <div class="progress-fill" id="disk-bar" style="width:0%; background: linear-gradient(90deg, #06b6d4, #10b981);"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Services + Cron log -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+
+      <!-- Services -->
+      <div class="card" data-aos="fade-right">
+        <div class="section-title">
+          <span>🔧</span> Сервисы
+        </div>
+        <div id="services-list" class="flex flex-col gap-2">
+          <!-- Filled by JS -->
+          <div class="service-row loading-shimmer" style="height:52px;"></div>
+          <div class="service-row loading-shimmer" style="height:52px;"></div>
+          <div class="service-row loading-shimmer" style="height:52px;"></div>
+        </div>
+      </div>
+
+      <!-- Cron log -->
+      <div class="card" data-aos="fade-left">
+        <div class="section-title">
+          <span>📋</span> Cron Log
+          <span class="text-xs font-normal normal-case tracking-normal text-slate-500 ml-1">/root/cron_log.txt</span>
+        </div>
+        <div id="cron-log" class="flex flex-col gap-2">
+          <!-- Filled by JS -->
+          <div class="log-entry loading-shimmer" style="height:40px;"></div>
+          <div class="log-entry loading-shimmer" style="height:40px;"></div>
+          <div class="log-entry loading-shimmer" style="height:40px;"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Docker containers -->
+    <div class="card mb-6" data-aos="fade-up">
+      <div class="section-title">
+        <span>🐳</span> Docker контейнеры
+      </div>
+      <div id="docker-list" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        <!-- Filled by JS -->
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <div class="text-center text-xs text-slate-600 py-4" data-aos="fade-up">
+      <span>ORION Digital · Server Monitor · Автообновление каждые 30 секунд</span>
+    </div>
+
+  </main>
+
+  <!-- Toast -->
+  <div class="toast" id="toast">
+    <span id="toast-icon">✓</span>
+    <span id="toast-text">Данные обновлены</span>
+  </div>
+
+  <script src="https://unpkg.com/aos@2.3.1/dist/aos.js"></script>
+  <script>
+    AOS.init({ duration: 600, once: true, easing: 'ease-out-cubic' });
+
+    // ─── State ───────────────────────────────────────────────────────────────
+    let countdown = 30;
+    let countdownInterval = null;
+    let isLoading = false;
+    const REFRESH_INTERVAL = 30;
+    const STATUS_URL = '/status.json';
+
+    // ─── Countdown ───────────────────────────────────────────────────────────
+    function startCountdown() {
+      clearInterval(countdownInterval);
+      countdown = REFRESH_INTERVAL;
+      updateCountdownUI();
+
+      countdownInterval = setInterval(() => {
+        countdown--;
+        updateCountdownUI();
+        if (countdown <= 0) {
+          fetchStatus();
+          countdown = REFRESH_INTERVAL;
+        }
+      }, 1000);
+    }
+
+    function updateCountdownUI() {
+      const el = document.getElementById('countdown-text');
+      const circle = document.getElementById('countdown-circle');
+      if (el) el.textContent = countdown;
+
+      // SVG circle: circumference = 2 * π * 20 ≈ 125.66
+      const circumference = 125.66;
+      const progress = countdown / REFRESH_INTERVAL;
+      const offset = circumference * (1 - progress);
+      if (circle) circle.style.strokeDashoffset = offset;
+    }
+
+    // ─── Toast ───────────────────────────────────────────────────────────────
+    function showToast(text, icon = '✓', duration = 2500) {
+      const toast = document.getElementById('toast');
+      document.getElementById('toast-text').textContent = text;
+      document.getElementById('toast-icon').textContent = icon;
+      toast.classList.add('show');
+      setTimeout(() => toast.classList.remove('show'), duration);
+    }
+
+    // ─── Helpers ─────────────────────────────────────────────────────────────
+    function getColorClass(pct) {
+      if (pct < 60) return 'text-green-400';
+      if (pct < 80) return 'text-yellow-400';
+      return 'text-red-400';
+    }
+
+    function getProgressColor(pct) {
+      if (pct < 60) return 'linear-gradient(90deg, #10b981, #34d399)';
+      if (pct < 80) return 'linear-gradient(90deg, #f59e0b, #fbbf24)';
+      return 'linear-gradient(90deg, #ef4444, #f87171)';
+    }
+
+    function formatUptime(seconds) {
+      const d = Math.floor(seconds / 86400);
+      const h = Math.floor((seconds % 86400) / 3600);
+      const m = Math.floor((seconds % 3600) / 60);
+      if (d > 0) return `${d}д ${h}ч ${m}м`;
+      if (h > 0) return `${h}ч ${m}м`;
+      return `${m}м`;
+    }
+
+    // ─── Render functions ─────────────────────────────────────────────────────
+
+    function renderMetrics(data) {
+      // CPU
+      const cpu = data.cpu || {};
+      const cpuPct = cpu.percent || 0;
+      document.getElementById('cpu-percent').textContent = cpuPct + '%';
+      document.getElementById('cpu-percent').className = 'big-number ' + getColorClass(cpuPct);
+      document.getElementById('cpu-cores').textContent = (cpu.cores || '?') + ' ядер';
+      document.getElementById('cpu-load').textContent = `Load: ${cpu.load1||0} ${cpu.load5||0} ${cpu.load15||0}`;
+      const cpuBar = document.getElementById('cpu-bar');
+      cpuBar.style.width = Math.min(cpuPct, 100) + '%';
+      cpuBar.style.background = getProgressColor(cpuPct);
+
+      // RAM
+      const ram = data.ram || {};
+      const ramPct = ram.percent || 0;
+      document.getElementById('ram-percent').textContent = ramPct + '%';
+      document.getElementById('ram-percent').className = 'big-number ' + getColorClass(ramPct);
+      document.getElementById('ram-total').textContent = (ram.total_mb || '?') + ' MB';
+      document.getElementById('ram-detail').textContent = `Used: ${ram.used_mb||0} / ${ram.total_mb||0} MB`;
+      const ramBar = document.getElementById('ram-bar');
+      ramBar.style.width = Math.min(ramPct, 100) + '%';
+      ramBar.style.background = getProgressColor(ramPct);
+
+      // Disk
+      const disk = data.disk || {};
+      const diskPctStr = disk.percent || '0%';
+      const diskPct = parseInt(diskPctStr);
+      document.getElementById('disk-percent').textContent = diskPctStr;
+      document.getElementById('disk-percent').className = 'big-number ' + getColorClass(diskPct);
+      document.getElementById('disk-total').textContent = disk.total || '?';
+      document.getElementById('disk-detail').textContent = `Used: ${disk.used||'?'} / ${disk.total||'?'}`;
+      const diskBar = document.getElementById('disk-bar');
+      diskBar.style.width = Math.min(diskPct, 100) + '%';
+      diskBar.style.background = getProgressColor(diskPct);
+    }
+
+    function renderServices(services) {
+      const container = document.getElementById('services-list');
+      if (!services || services.length === 0) {
+        container.innerHTML = '<div class="text-sm text-slate-500 text-center py-4">Нет данных о сервисах</div>';
+        return;
+      }
+
+      container.innerHTML = services.map(svc => {
+        const isRunning = svc.running;
+        const isUnknown = svc.status === 'unknown';
+        const badgeClass = isRunning ? 'badge-running' : (isUnknown ? 'badge-unknown' : 'badge-stopped');
+        const dotClass = isRunning ? 'green' : (isUnknown ? 'yellow' : 'red');
+        const statusText = isRunning ? 'Работает' : (isUnknown ? 'Неизвестно' : 'Остановлен');
+
+        return `
+          <div class="service-row">
+            <div class="flex items-center gap-3">
+              <span class="pulse-dot ${dotClass}"></span>
+              <div>
+                <div class="text-sm font-semibold text-white">${svc.display || svc.name}</div>
+                ${svc.container && svc.container !== 'not found' ? `<div class="text-xs text-slate-500 font-mono">${svc.container}</div>` : ''}
+              </div>
+            </div>
+            <span class="${badgeClass}">
+              <span class="pulse-dot ${dotClass}" style="width:6px;height:6px;"></span>
+              ${statusText}
+            </span>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function renderCronLog(logs) {
+      const container = document.getElementById('cron-log');
+      if (!logs || logs.length === 0) {
+        container.innerHTML = '<div class="text-sm text-slate-500 text-center py-4">Лог пуст или файл не найден</div>';
+        return;
+      }
+
+      container.innerHTML = logs.map((line, i) => {
+        // Попытка выделить timestamp
+        const match = line.match(/^(\[?[\d\.\s:]+\]?)\s*(.*)/);
+        if (match) {
+          return `
+            <div class="log-entry" style="animation-delay:${i*50}ms">
+              <span class="timestamp">${match[1]}</span>
+              <span> ${match[2]}</span>
+            </div>
+          `;
+        }
+        return `<div class="log-entry">${line}</div>`;
+      }).join('');
+    }
+
+    function renderDocker(containers) {
+      const container = document.getElementById('docker-list');
+      if (!containers || containers.length === 0) {
+        container.innerHTML = '<div class="text-sm text-slate-500 col-span-3 text-center py-4">Нет запущенных контейнеров</div>';
+        return;
+      }
+
+      container.innerHTML = containers.map(c => {
+        const isUp = c.status && c.status.toLowerCase().startsWith('up');
+        return `
+          <div class="service-row flex-col items-start gap-2" style="padding:12px 14px;">
+            <div class="flex items-center justify-between w-full">
+              <span class="text-sm font-semibold text-white font-mono">${c.name}</span>
+              <span class="${isUp ? 'badge-running' : 'badge-stopped'}" style="font-size:11px;padding:2px 8px;">
+                ${isUp ? '▲ Up' : '▼ Down'}
+              </span>
+            </div>
+            <div class="text-xs text-slate-500 font-mono truncate w-full">${c.image}</div>
+            <div class="text-xs text-slate-600 font-mono">${c.status}</div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function renderBanner(data) {
+      const services = data.services || [];
+      const allRunning = services.every(s => s.running);
+      const someDown = services.some(s => !s.running && s.status !== 'unknown');
+
+      const banner = document.getElementById('status-banner');
+      const icon = document.getElementById('overall-icon');
+      const status = document.getElementById('overall-status');
+      const desc = document.getElementById('overall-desc');
+      const uptimeEl = document.getElementById('uptime-display');
+
+      if (allRunning) {
+        banner.style.borderColor = 'rgba(16,185,129,0.3)';
+        banner.style.background = 'linear-gradient(135deg, rgba(16,185,129,0.05) 0%, rgba(15,22,41,0.95) 100%)';
+        icon.textContent = '✅';
+        status.textContent = 'Все системы работают нормально';
+        desc.textContent = `${services.length} сервисов активны · Данные от ${data.timestamp_human || '—'}`;
+      } else if (someDown) {
+        banner.style.borderColor = 'rgba(239,68,68,0.3)';
+        banner.style.background = 'linear-gradient(135deg, rgba(239,68,68,0.05) 0%, rgba(15,22,41,0.95) 100%)';
+        icon.textContent = '⚠️';
+        status.textContent = 'Обнаружены проблемы';
+        const downCount = services.filter(s => !s.running).length;
+        desc.textContent = `${downCount} сервис(ов) не работают · ${data.timestamp_human || '—'}`;
+      } else {
+        banner.style.borderColor = 'rgba(245,158,11,0.3)';
+        icon.textContent = '🔄';
+        status.textContent = 'Статус неизвестен';
+        desc.textContent = data.timestamp_human || '—';
+      }
+
+      if (data.uptime_seconds) {
+        uptimeEl.textContent = formatUptime(data.uptime_seconds);
+      } else if (data.uptime) {
+        uptimeEl.textContent = data.uptime;
+      }
+    }
+
+    // ─── Main fetch ───────────────────────────────────────────────────────────
+    async function fetchStatus() {
+      if (isLoading) return;
+      isLoading = true;
+
+      const btn = document.getElementById('refresh-btn');
+      const icon = document.getElementById('refresh-icon');
+      if (btn) btn.disabled = true;
+      if (icon) icon.classList.add('spin');
+
+      try {
+        const resp = await fetch(STATUS_URL + '?t=' + Date.now());
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        const data = await resp.json();
+
+        renderBanner(data);
+        renderMetrics(data);
+        renderServices(data.services);
+        renderCronLog(data.cron_log);
+        renderDocker(data.docker_containers);
+
+        // Update last update time
+        const lastUpdate = document.getElementById('last-update');
+        if (lastUpdate) lastUpdate.textContent = data.timestamp_human || new Date().toLocaleTimeString('ru-RU');
+
+        showToast('Данные обновлены', '✓');
+
+        // Reset countdown
+        startCountdown();
+
+      } catch (err) {
+        console.error('Fetch error:', err);
+        showToast('Ошибка загрузки данных', '✗', 4000);
+
+        // Show error in banner
+        const status = document.getElementById('overall-status');
+        const desc = document.getElementById('overall-desc');
+        if (status) status.textContent = 'Ошибка получения данных';
+        if (desc) desc.textContent = err.message;
+      } finally {
+        isLoading = false;
+        if (btn) btn.disabled = false;
+        if (icon) icon.classList.remove('spin');
+      }
+    }
+
+    // ─── Init ─────────────────────────────────────────────────────────────────
+    document.addEventListener('DOMContentLoaded', () => {
+      fetchStatus();
+      startCountdown();
+    });
+  </script>
+</body>
+</html>

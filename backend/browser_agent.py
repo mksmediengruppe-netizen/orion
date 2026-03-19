@@ -98,7 +98,56 @@ def _get_pw_page(url: str = None, width: int = 1280, height: int = 800):
                 _pw_page.wait_for_timeout(2000)
         return _pw_playwright, _pw_browser, _pw_context, _pw_page
     except Exception as e:
+        err_str = str(e)
         logger.warning(f"[PW] _get_pw_page error: {e}")
+        # При greenlet/thread ошибке — пересоздаём весь Playwright instance
+        if "greenlet" in err_str.lower() or "thread" in err_str.lower() or "switch" in err_str.lower():
+            logger.warning(f"[PW] Greenlet/thread error detected, recreating Playwright instance")
+            try:
+                if _pw_playwright is not None:
+                    try:
+                        _pw_playwright.stop()
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+            _pw_playwright = None
+            _pw_browser = None
+            _pw_context = None
+            _pw_page = None
+            # Retry once with fresh instance
+            try:
+                _pw_playwright = sync_playwright().start()
+                _pw_browser = _pw_playwright.chromium.launch(
+                    headless=True,
+                    args=["--no-sandbox", "--disable-setuid-sandbox",
+                          "--disable-dev-shm-usage", "--disable-gpu",
+                          "--disable-web-security", "--allow-running-insecure-content"]
+                )
+                _pw_context = _pw_browser.new_context(
+                    viewport={"width": width, "height": height},
+                    user_agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                               "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+                    locale="ru-RU",
+                    timezone_id="Europe/Moscow",
+                )
+                _pw_context.set_default_timeout(15000)
+                _pw_page = _pw_context.new_page()
+                if url:
+                    _pw_page.goto(url, timeout=30000, wait_until="domcontentloaded")
+                    try:
+                        _pw_page.wait_for_load_state("networkidle", timeout=10000)
+                    except Exception:
+                        _pw_page.wait_for_timeout(2000)
+                logger.info(f"[PW] Playwright recreated successfully after greenlet error")
+                return _pw_playwright, _pw_browser, _pw_context, _pw_page
+            except Exception as e2:
+                logger.error(f"[PW] Failed to recreate Playwright: {e2}")
+                _pw_page = None
+                _pw_context = None
+                _pw_browser = None
+                _pw_playwright = None
+                return None, None, None, None
         _pw_page = None
         _pw_context = None
         _pw_browser = None
@@ -175,6 +224,7 @@ class BrowserAgent:
             with _pw_lock:
                 _, _, _, page = _get_pw_page(url)
                 if page is None:
+                    logger.warning(f"[PW] navigate: page is None, falling back to requests for {url}")
                     return self._navigate_requests(url)
 
                 self._current_url = page.url

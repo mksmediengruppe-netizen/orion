@@ -1084,6 +1084,12 @@ CMS (Битрикс/WordPress):
 5. Максимум 10 шагов навигации
 Ты ВИДИШЬ страницу через скриншоты. Используй это.
 Не нужна документация если можешь просто посмотреть и кликнуть.
+
+## ЗАПРЕЩЁННЫЕ ОПЕРАЦИИ В SANDBOX
+- НЕ используй subprocess.Popen, os.system, subprocess.call — они ЗАБЛОКИРОВАНЫ sandbox-ом.
+- Для выполнения команд на сервере используй ТОЛЬКО ssh_execute.
+- Для выполнения Python кода используй ТОЛЬКО code_interpreter.
+- Перед деплоем ВСЕГДА проверяй nginx конфиг: ssh_execute('cat /etc/nginx/sites-enabled/* | grep root') чтобы узнать правильный webroot.
 """
 
 # AGENT_SYSTEM_PROMPT_PRO - minimal prompt for smart models (Sonnet, Opus)
@@ -1129,7 +1135,14 @@ Lucide иконки (https://unpkg.com/lucide@latest).
    Если IP неправильный — зайди в панель хостинга через 
    browser_navigate и измени A-запись. Или используй API хостинга.
 2. Сделай скриншот сайта и оцени дизайн.
-3. Если оценка < 8/10 — улучши и повтори."""
+3. Если оценка < 8/10 — улучши и повтори.
+
+## ЗАПРЕЩЁННЫЕ ОПЕРАЦИИ В SANDBOX
+- НЕ используй subprocess.Popen, os.system, subprocess.call — они ЗАБЛОКИРОВАНЫ sandbox-ом.
+- Для выполнения команд на сервере используй ТОЛЬКО ssh_execute.
+- Для выполнения Python кода используй ТОЛЬКО code_interpreter.
+- Перед деплоем ВСЕГДА проверяй nginx конфиг: ssh_execute('cat /etc/nginx/sites-enabled/* | grep root') чтобы узнать правильный webroot.
+"""
 
 # Pro modes use minimal prompt
 PRO_MODES = {"pro_standard", "pro_premium", "architect"}
@@ -1748,13 +1761,13 @@ class AgentLoop:
                     result["_original_length"] = len(_result_text)
                     # Обрезать для контекста
                     if "stdout" in result and len(str(result["stdout"])) > 200:
-                        result["stdout"] = str(result["stdout"])[:200] + f"\n... (полный результат в {_save_path})"
+                        result["stdout"] = str(result["stdout"])[:200] + f"\n... (полный результат сохранён на ORION-сервере в {_save_path}, используй file_read для чтения)"
                     if "html" in result and len(str(result["html"])) > 200:
-                        result["html"] = str(result["html"])[:200] + f"\n... (полный HTML в {_save_path})"
+                        result["html"] = str(result["html"])[:200] + f"\n... (полный HTML сохранён на ORION-сервере в {_save_path}, используй file_read для чтения)"
                     if "text" in result and len(str(result["text"])) > 300:
-                        result["text"] = str(result["text"])[:300] + f"\n... (полный текст в {_save_path})"
+                        result["text"] = str(result["text"])[:300] + f"\n... (полный текст сохранён на ORION-сервере в {_save_path}, используй file_read для чтения)"
                     if "content" in result and len(str(result["content"])) > 300:
-                        result["content"] = str(result["content"])[:300] + f"\n... (полный контент в {_save_path})"
+                        result["content"] = str(result["content"])[:300] + f"\n... (полный контент сохранён на ORION-сервере в {_save_path}, используй file_read для чтения)"
                     logger.info(f"[FS-CONTEXT] Saved {len(_result_text)} chars to {_save_path}")
             except Exception as _fs_err:
                 logger.debug(f"[FS-CONTEXT] Error saving result: {_fs_err}")
@@ -3684,6 +3697,40 @@ ReactDOM.createRoot(document.getElementById('root')).render(<App />);
                 techs.append(tech)
         return decisions, files, urls, techs
 
+    def _get_thinking_text(self, tool_name: str, tool_args: dict) -> str:
+        try:
+            if tool_name == 'ssh_execute':
+                cmd = tool_args.get('command', '')
+                if cmd:
+                    return 'Выполняю: ' + cmd[:80] + ('...' if len(cmd) > 80 else '')
+                return 'SSH подключение'
+            elif tool_name == 'file_write':
+                return 'Создаю файл: ' + tool_args.get('path', '')
+            elif tool_name == 'file_read':
+                return 'Читаю файл: ' + tool_args.get('path', '')
+            elif tool_name in ('browser_navigate', 'browser_check_site'):
+                url = tool_args.get('url', '')
+                return 'Открываю: ' + url[:60]
+            elif tool_name == 'browser_screenshot':
+                return 'Делаю скриншот страницы'
+            elif tool_name == 'browser_click':
+                return 'Кликаю: ' + str(tool_args.get('selector', tool_args.get('text', '')))
+            elif tool_name == 'browser_fill':
+                return 'Заполняю поле: ' + str(tool_args.get('selector', ''))
+            elif tool_name == 'generate_image':
+                return 'Генерирую изображение: ' + str(tool_args.get('prompt', ''))[:60]
+            elif tool_name == 'task_complete':
+                return 'Завершаю задачу...'
+            elif tool_name == 'update_scratchpad':
+                return 'Обновляю план задачи'
+            elif tool_name == 'search_web':
+                return 'Ищу: ' + str(tool_args.get('query', ''))[:60]
+            elif tool_name == 'read_url':
+                return 'Читаю страницу: ' + str(tool_args.get('url', ''))[:60]
+            else:
+                return ''
+        except Exception:
+            return ''
     def run_stream(self, user_message, chat_history=None, file_content=None, ssh_credentials=None):
         """
         Run the agent loop with streaming.
@@ -3841,6 +3888,14 @@ ReactDOM.createRoot(document.getElementById('root')).render(<App />);
                 logging.warning(f"[ProjectSummary] Load failed: {_psum_err}")
         if _project_summaries:
             _effective_system_prompt += "\n\n" + _project_summaries
+            # LTM INDICATOR: отправить SSE event с тем что вспомнили
+            try:
+                _mem_lines = [l.strip() for l in _project_summaries.split("\n") if l.strip() and not l.startswith("ИСТОРИЯ") and not l.startswith("КЛЮЧЕВЫЕ")]
+                _mem_preview = _mem_lines[:5] if _mem_lines else []
+                if _mem_preview:
+                    yield self._sse({"type": "memory_context", "items": _mem_preview, "total": len(_mem_lines)})
+            except Exception as _ltm_sse_err:
+                pass
 
 
         # ── Extended Thinking: анализ перед выполнением сложных задач ──
@@ -4120,6 +4175,10 @@ ReactDOM.createRoot(document.getElementById('root')).render(<App />);
                         except Exception as _esc_err:
                             logger.debug(f"URL escape error: {_esc_err}")
 
+                # THINKING STEP: показать что агент собирается делать
+                _thinking_text = self._get_thinking_text(tool_name, tool_args)
+                if _thinking_text:
+                    yield self._sse({"type": "thinking_step", "text": _thinking_text})
                 yield self._sse({
                     "type": "tool_start",
                     "tool": tool_name,

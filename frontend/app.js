@@ -714,6 +714,11 @@ const UI = {
         if (textarea) {
             textarea.addEventListener('keydown', e => {
                 if (e.key === 'Enter' && !e.shiftKey) {
+                    // DEBOUNCE_ENTER: предотвращаем двойную отправку
+                    if (window._enterDebounce) return;
+                    window._enterDebounce = true;
+                    setTimeout(() => { window._enterDebounce = false; }, 1000);
+
                     e.preventDefault();
                     Chat.send();
                 }
@@ -832,6 +837,9 @@ const UI = {
         // Collapse activity
         const collapseBtn = $('btn-collapse-activity');
         if (collapseBtn) collapseBtn.addEventListener('click', () => ActivityPanel.hide());
+        // Detail panel close button
+        const adpClose = $('adp-close');
+        if (adpClose) adpClose.addEventListener('click', () => ActivityPanel.closeDetail());
 
         // Sidebar toggle (mobile)
         const sidebarToggle = $('btn-sidebar-toggle');
@@ -1201,7 +1209,7 @@ const Chat = {
         state.currentChatId = chatId;
         state.messages = [];
         ChatList.setActive(chatId);
-        ActivityPanel.clear();
+        ActivityPanel.restoreForChat(chatId);
         Sidebar.close();
 
         const chat = state.chats.find(c => c.id === chatId);
@@ -1286,6 +1294,23 @@ const Chat = {
     },
 
     async send() {
+    // DEBOUNCE: блокировка кнопки отправки на 1 секунду
+    const btnSend = document.getElementById('btn-send') || document.querySelector('.btn-send');
+    if (btnSend && !btnSend._debouncing) {
+        btnSend._debouncing = true;
+        btnSend.disabled = true;
+        btnSend.style.opacity = '0.5';
+        btnSend.style.pointerEvents = 'none';
+        setTimeout(() => {
+            btnSend.disabled = false;
+            btnSend.style.opacity = '1';
+            btnSend.style.pointerEvents = 'auto';
+            btnSend._debouncing = false;
+        }, 1000);
+    } else if (btnSend && btnSend._debouncing) {
+        return; // Блокируем повторную отправку
+    }
+
         const textarea = $('message-input');
         if (!textarea) return;
         const text = textarea.value.trim();
@@ -1580,7 +1605,13 @@ const Chat = {
             case 'tool_start':
                 ActivityPanel.show();
                 ActivityPanel.setStatus('running');
-                ActivityPanel.addLine('tool-start', this._toolEmoji(evt.tool || evt.name), (evt.tool || evt.name || 'tool') + ': ' + (evt.args ? JSON.stringify(evt.args).substring(0, 100) : ''));
+                {
+                    const _tname = evt.tool || evt.name || 'tool';
+                    const _targs = evt.args || {};
+                    const _tpreview = typeof _targs === 'string' ? _targs.substring(0, 100) : JSON.stringify(_targs).substring(0, 100);
+                    const _tdetail = { tool: _tname, emoji: this._toolEmoji(_tname), args: _targs, type: 'tool_start' };
+                    ActivityPanel.addToGroup('tool-start', this._toolEmoji(_tname), _tname + ': ' + _tpreview, _tdetail);
+                }
                 // ПАТЧ B1: добавляем плашку в чат
                 {
                     const _bubble = aiMsgEl ? aiMsgEl.querySelector('.msg-bubble') : null;
@@ -1630,11 +1661,19 @@ const Chat = {
                     // BUG-4 FIX: backend sends 'preview' field, also check result/output/summary/text
                     const resultText = evt.preview || evt.summary || evt.result || evt.output || evt.text || '';
                     const isError = evt.error || (evt.success === false);
-                    ActivityPanel.addLine(
+                    const _trDetail = {
+                        tool: evt.tool || 'result',
+                        emoji: isError ? '❌' : '📄',
+                        elapsed: evt.elapsed,
+                        preview: resultText,
+                        screenshot: evt.screenshot || null,
+                        url: evt.url || null
+                    };
+                    ActivityPanel.addToGroup(
                         isError ? 'error' : 'tool-result',
                         isError ? '❌' : '📄',
                         resultText.substring(0, 300),
-                        true
+                        _trDetail
                     );
                     // Screenshot from browser tools
                     if (evt.screenshot) {
@@ -1674,17 +1713,17 @@ const Chat = {
                 ActivityPanel.show();
                 ActivityPanel.setStatus('running');
                 ActivityPanel.updateProgress(evt.iteration || evt.current, evt.max || evt.total, evt.steps || []);
-                ActivityPanel.addLine('iteration', '🔄', `Итерация ${evt.iteration || evt.current || '?'} / ${evt.max || evt.total || '?'}`);
+                ActivityPanel.startIterationGroup(evt.iteration || evt.current || '?', evt.max || evt.total || '?');
                 break;
 
             case 'iteration':
                 ActivityPanel.updateProgress(evt.current, evt.total, evt.steps);
-                ActivityPanel.addLine('iteration', '🔄', `Итерация ${evt.current}/${evt.total}`);
+                ActivityPanel.startIterationGroup(evt.current, evt.total);
                 break;
 
             // ── BUG-4 FIX: self_heal — показываем в панели ───────────
             case 'self_heal':
-                ActivityPanel.addLine('thinking', '🔁', `Самоисправление #${evt.attempt || 1}: ${evt.fix_description || 'применяю фикс...'}`);
+                ActivityPanel.addToGroup('thinking', '🔁', `Самоисправление #${evt.attempt || 1}: ${evt.fix_description || 'применяю фикс...'}`);
                 break;
 
             case 'chart':
@@ -1794,8 +1833,27 @@ const Chat = {
                 BrowserTakeover.show(evt);
                 break;
 
+            case 'memory_context':
+                // LTM memory indicator
+                try {
+                    const items = evt.items || [];
+                    const total = evt.total || items.length;
+                    const memBlock = document.createElement('div');
+                    memBlock.className = 'memory-context-block';
+                    memBlock.innerHTML = '<div class="memory-context-header">🧠 Из памяти (' + total + ' фактов)</div>' +
+                        items.map(function(item) { return '<div class="memory-context-item">' + item.replace(/^[-•]\s*/, '') + '</div>'; }).join('');
+                    const actLog = document.getElementById('activity-log');
+                    if (actLog) actLog.insertBefore(memBlock, actLog.firstChild);
+                } catch(e) {}
+                break;
             case 'thinking_start':
-                ActivityPanel.addLine('thinking', '🧠', 'Анализирую задачу...');
+                ActivityPanel.addLine('thinking', '🧠', evt.text || 'Анализирую задачу...');
+                break;
+            case 'thinking_step':
+                ActivityPanel.addToGroup('thinking-step', '💭', evt.text || '');
+                break;
+            case 'plan_step':
+                ActivityPanel.addLine('iteration', '📋', evt.text || '');
                 break;
             case 'thinking_end': {
                 const blocks = document.querySelectorAll('.thinking-block');
@@ -2657,8 +2715,74 @@ const ActivityPanel = {
         state.activityLines = [];
         this.updateProgress(0, 0, []);
         this.hideTakeover();
+        this.closeDetail();
     },
 
+    restoreForChat(chatId) {
+        // ПАТЧ-HIST: восстанавливаем историю из localStorage
+        const log = $('activity-log');
+        if (!log) return;
+        // Очищаем текущее содержимое
+        log.innerHTML = '';
+        state.activityLines = [];
+        this.updateProgress(0, 0, []);
+        this.hideTakeover();
+        this.closeDetail();
+        if (!chatId) {
+            // Новый чат — показываем заглушку
+            const emptyDiv = document.createElement('div');
+            emptyDiv.className = 'activity-empty';
+            emptyDiv.innerHTML = '<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg><p>Активность агента появится здесь</p>';
+            log.appendChild(emptyDiv);
+            return;
+        }
+        try {
+            const key = 'orion_activity_' + chatId;
+            const saved = JSON.parse(localStorage.getItem(key) || '[]');
+            if (saved.length === 0) {
+                // Нет истории — показываем заглушку
+                const emptyDiv = document.createElement('div');
+                emptyDiv.className = 'activity-empty';
+                emptyDiv.innerHTML = '<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg><p>Активность агента появится здесь</p>';
+                log.appendChild(emptyDiv);
+                return;
+            }
+            // Восстанавливаем события
+            const headerDiv = document.createElement('div');
+            headerDiv.className = 'activity-history-header';
+            headerDiv.innerHTML = '<span>📋 История задачи (' + saved.length + ' событий)</span>';
+            log.appendChild(headerDiv);
+            saved.forEach(item => {
+                this.addLineRaw(item.type, item.emoji, item.text, item.time, item.detail);
+            });
+            log.scrollTop = log.scrollHeight;
+            this.show();
+            this.setStatus('done');
+        } catch(e) {}
+    },
+    addLineRaw(type, emoji, text, timeStr, detailData) {
+        // Добавляем строку без сохранения в localStorage (для восстановления)
+        const log = $('activity-log');
+        if (!log) return;
+        const emptyEl = log.querySelector('.activity-empty');
+        if (emptyEl) emptyEl.remove();
+        const line = el('div', 'activity-line ' + type);
+        const timeEl = el('span', 'activity-time', timeStr ? new Date(timeStr).toLocaleTimeString('ru', {hour:'2-digit',minute:'2-digit',second:'2-digit'}) : '');
+        const emojiEl = el('span', 'activity-emoji', emoji);
+        const contentEl = el('div', 'activity-content');
+        const textEl = el('div', 'activity-text', Utils.escapeHtml(text));
+        contentEl.appendChild(textEl);
+        line.appendChild(timeEl);
+        line.appendChild(emojiEl);
+        line.appendChild(contentEl);
+        if (detailData) {
+            line.classList.add('clickable');
+            line._detailData = detailData;
+            line.addEventListener('click', () => ActivityPanel.showDetail(line, detailData));
+        }
+        log.appendChild(line);
+        state.activityLines.push({ type, emoji, text, time: timeStr, detail: detailData });
+    },
     setStatus(status) {
         // BUG-6 FIX: HTML uses .status-dot and #status-text, not .status-pulse
         const dotEl = document.querySelector('.status-dot');
@@ -2668,7 +2792,7 @@ const ActivityPanel = {
         if (textEl) textEl.textContent = labels[status] || status;
     },
 
-    addLine(type, emoji, text, collapsible = false) {
+    addLine(type, emoji, text, collapsible = false, detailData = null) {
         const log = $('activity-log');
         if (!log) return;
 
@@ -2700,10 +2824,86 @@ const ActivityPanel = {
         line.appendChild(time);
         line.appendChild(emojiEl);
         line.appendChild(content);
+        // Make clickable if has detail data
+        if (detailData) {
+            line.classList.add('clickable');
+            line._detailData = detailData;
+            line.addEventListener('click', () => ActivityPanel.showDetail(line, detailData));
+        }
         log.appendChild(line);
 
-        state.activityLines.push({ type, emoji, text, time: new Date() });
+        const lineData = { type, emoji, text, time: new Date().toISOString(), detail: detailData };
+        state.activityLines.push(lineData);
+        // ПАТЧ-HIST: сохраняем в localStorage
+        if (state.currentChatId) {
+            try {
+                const key = 'orion_activity_' + state.currentChatId;
+                const saved = JSON.parse(localStorage.getItem(key) || '[]');
+                saved.push(lineData);
+                // Храним максимум 200 событий
+                if (saved.length > 200) saved.splice(0, saved.length - 200);
+                localStorage.setItem(key, JSON.stringify(saved));
+            } catch(e) {}
+        }
         log.scrollTop = log.scrollHeight;
+    },
+    showDetail(lineEl, data) {
+        // Deactivate previous
+        document.querySelectorAll('.activity-line.active').forEach(l => l.classList.remove('active'));
+        lineEl.classList.add('active');
+        const panel = $('activity-detail-panel');
+        const title = $('adp-title');
+        const body  = $('adp-body');
+        if (!panel || !body) return;
+        // Build detail HTML
+        const tool = data.tool || data.type || 'Действие';
+        const emoji = data.emoji || '🔧';
+        title.textContent = emoji + ' ' + tool;
+        let html = '';
+        // Status badge
+        if (data.success !== undefined) {
+            const ok = data.success;
+            html += '<div class="adp-badge ' + (ok ? 'ok' : 'fail') + '">' + (ok ? '✓ Успешно' : '✗ Ошибка') + '</div>';
+        }
+        // Elapsed
+        if (data.elapsed !== undefined) {
+            html += '<div class="adp-elapsed">⏱ ' + data.elapsed + 'с</div>';
+        }
+        // Args section
+        if (data.args) {
+            html += '<div class="adp-section"><div class="adp-section-title">Аргументы</div>';
+            const argsStr = typeof data.args === 'string' ? data.args : JSON.stringify(data.args, null, 2);
+            html += '<div class="adp-code">' + Utils.escapeHtml(argsStr) + '</div></div>';
+        }
+        // Command (for ssh_execute)
+        if (data.command) {
+            html += '<div class="adp-section"><div class="adp-section-title">Команда</div>';
+            html += '<div class="adp-code">' + Utils.escapeHtml(data.command) + '</div></div>';
+        }
+        // Result / Preview
+        if (data.preview || data.result || data.output) {
+            const resultText = data.preview || data.result || data.output || '';
+            const isErr = !data.success;
+            html += '<div class="adp-section"><div class="adp-section-title">Результат</div>';
+            html += '<div class="adp-code ' + (isErr ? 'error' : 'success') + '">' + Utils.escapeHtml(resultText) + '</div></div>';
+        }
+        // Full text
+        if (data.text && data.text !== data.preview) {
+            html += '<div class="adp-section"><div class="adp-section-title">Текст</div>';
+            html += '<div class="adp-code">' + Utils.escapeHtml(data.text) + '</div></div>';
+        }
+        // Screenshot
+        if (data.screenshot) {
+            html += '<div class="adp-section"><div class="adp-section-title">Скриншот</div>';
+            html += '<img src="data:image/png;base64,' + data.screenshot + '" style="width:100%;border-radius:6px;border:1px solid var(--border)"></div>';
+        }
+        body.innerHTML = html || '<div style="color:var(--text-tertiary);font-size:12px">Нет дополнительных данных</div>';
+        panel.classList.remove('hidden');
+    },
+    closeDetail() {
+        const panel = $('activity-detail-panel');
+        if (panel) panel.classList.add('hidden');
+        document.querySelectorAll('.activity-line.active').forEach(l => l.classList.remove('active'));
     },
 
     renderTaskProgress() {
@@ -2835,7 +3035,7 @@ const ActivityPanel = {
         const stepsEl = progressEl.querySelector('.progress-steps');
 
         if (fill) fill.style.width = Math.round((current / total) * 100) + '%';
-        if (label) label.textContent = `Итерация ${current} / ${total}`;
+        if (label) { const pct = total > 0 ? Math.round((current / total) * 100) : 0; label.textContent = `Итерация ${current} / ${total} (${pct}%)`; }
 
         if (stepsEl && steps.length) {
             stepsEl.innerHTML = steps.map(s => `
@@ -2846,7 +3046,78 @@ const ActivityPanel = {
         }
     },
 
-    showTakeover(message, screenshotData) {
+
+    // ═══ BLOCK3: Collapsible iteration groups ═══
+    startIterationGroup(iteration, total) {
+        const log = $('activity-log');
+        if (!log) return;
+        // Close previous group if open
+        if (this._currentGroup) {
+            this._currentGroup.classList.remove('active-group');
+        }
+        const group = el('div', 'activity-group');
+        const header = el('div', 'activity-group-header');
+        header.innerHTML = '<span class="group-arrow">&#9654;</span>' +
+            '<span class="group-emoji">\ud83d\udd04</span>' +
+            '<span class="group-title">\u0418\u0442\u0435\u0440\u0430\u0446\u0438\u044f ' + iteration + ' / ' + total + '</span>' +
+            '<span class="group-time">' + Utils.formatTime() + '</span>' +
+            '<span class="group-count"></span>';
+        const body = el('div', 'activity-group-body');
+        body.style.display = 'block'; // Latest group is expanded
+        group.appendChild(header);
+        group.appendChild(body);
+        group.classList.add('active-group');
+        header.addEventListener('click', () => {
+            const isOpen = body.style.display !== 'none';
+            body.style.display = isOpen ? 'none' : 'block';
+            header.querySelector('.group-arrow').innerHTML = isOpen ? '&#9654;' : '&#9660;';
+            group.classList.toggle('collapsed', isOpen);
+        });
+        log.appendChild(group);
+        this._currentGroup = group;
+        this._currentGroupBody = body;
+        this._groupItemCount = 0;
+        log.scrollTop = log.scrollHeight;
+    },
+    addToGroup(type, emoji, text, detailData = null) {
+        const target = this._currentGroupBody || $('activity-log');
+        if (!target) return;
+        const line = el('div', 'activity-line group-item ' + type);
+        const time = el('span', 'activity-time', Utils.formatTime());
+        const emojiEl = el('span', 'activity-emoji', emoji);
+        const content = el('div', 'activity-content');
+        const textEl = el('div', 'activity-text', Utils.escapeHtml(text));
+        content.appendChild(textEl);
+        line.appendChild(time);
+        line.appendChild(emojiEl);
+        line.appendChild(content);
+        if (detailData) {
+            line.classList.add('clickable');
+            line._detailData = detailData;
+            line.addEventListener('click', (e) => { e.stopPropagation(); ActivityPanel.showDetail(line, detailData); });
+        }
+        target.appendChild(line);
+        this._groupItemCount = (this._groupItemCount || 0) + 1;
+        // Update count badge
+        if (this._currentGroup) {
+            const badge = this._currentGroup.querySelector('.group-count');
+            if (badge) badge.textContent = this._groupItemCount + ' \u0434\u0435\u0439\u0441\u0442\u0432.';
+        }
+        // Save to localStorage
+        const lineData = { type, emoji, text, time: new Date().toISOString(), detail: detailData, grouped: true };
+        state.activityLines.push(lineData);
+        if (state.currentChatId) {
+            try {
+                const key = 'orion_activity_' + state.currentChatId;
+                const saved = JSON.parse(localStorage.getItem(key) || '[]');
+                saved.push(lineData);
+                if (saved.length > 200) saved.splice(0, saved.length - 200);
+                localStorage.setItem(key, JSON.stringify(saved));
+            } catch(e) {}
+        }
+        target.scrollTop = target.scrollHeight;
+    },
+        showTakeover(message, screenshotData) {
         const panel = $('activity-panel');
         if (!panel) return;
         this.show();

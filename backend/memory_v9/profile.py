@@ -47,18 +47,52 @@ class UserProfile:
         self._data["chat_count"] = self._data.get("chat_count", 0) + 1
         self._save()
 
+    # Task-specific keys that should NOT pollute new chats
+    _TASK_KEYS = {
+        "задача", "желает", "deploy_method", "server_ip", "web_server", "os",
+        "deploy_path", "hosting_panel", "dns_tool", "hosting", "login",
+        "использует Tailwind CSS", "использует анимации", "генерирует фото через AI",
+        "деплой через nginx", "мета-теги", "favicon", "структура_страницы_курса",
+        "сортировка меню", "создание страниц", "способ_редактирования",
+        "предпочтительный_метод_работы", "задача", "раздел меню", "доступ к FTP",
+        "работа с Битрикс", "CMS", "website_structure", "company_services",
+        "контактные данные", "цвета сайта", "дизайн", "элементы сайта",
+        "design_colors", "структура сайта", "тематика изображений",
+    }
+
     def get_prompt_context(self) -> str:
         facts = self._data.get("facts", [])
         prefs = self._data.get("preferences", {})
-        logger.info(f"[MEMORY] get_prompt_context: user={self._user_id!r}, facts={facts}, prefs={prefs}")
+        logger.info(f"[MEMORY] get_prompt_context: user={self._user_id!r}, facts={len(facts)}, prefs_keys={list(prefs.keys())[:5]}")
         if not facts and not prefs:
             return ""
         parts = ["ПРОФИЛЬ ПОЛЬЗОВАТЕЛЯ:"]
         if facts:
-            parts.append("  Факты: " + "; ".join(facts[:10]))
+            # Only include personal facts (name, profession, location, stack) — not task facts
+            personal_facts = [f for f in facts if not any(kw in f.lower() for kw in [
+                "лендинг", "сайт", "задеплой", "создать", "хочет сделать", "нужен лендинг",
+                "просил создать", "хочет чтобы", "хочет создать", "нужен сайт",
+                "подключается к серверу", "использует логин", "использует команду",
+                "работает с сервером", "имеет доступ к серверу", "работает с cms",
+                "работает с сайтом", "занимается добавлением", "занимается администрированием",
+                "работает над сайтом", "работает с ftp", "работает с курсом",
+            ])]
+            if personal_facts:
+                parts.append("  Факты: " + "; ".join(personal_facts[:5]))
         if prefs:
-            for k, v in list(prefs.items())[:5]:
-                parts.append(f"  {k}: {v}")
+            # Only include personal/persistent prefs, not task-specific ones
+            filtered_prefs = {k: v for k, v in prefs.items() 
+                            if k not in self._TASK_KEYS 
+                            and not any(task_kw in str(k).lower() for task_kw in [
+                                "задача", "желает", "deploy", "server", "hosting",
+                                "структура", "элементы", "контактные", "цвета",
+                                "дизайн", "тематика", "стиль", "секции", "логотип",
+                            ])}
+            for k, v in list(filtered_prefs.items())[:3]:
+                if isinstance(v, str) and len(v) < 100:
+                    parts.append(f"  {k}: {v}")
+        if len(parts) == 1:
+            return ""
         result = "\n".join(parts)
         logger.info(f"[MEMORY] get_prompt_context result: {result[:200]}")
         return result

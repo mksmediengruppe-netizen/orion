@@ -1,0 +1,151 @@
+{
+  "timestamp": "2026-03-19T12:31:39.599402",
+  "timestamp_human": "19.03.2026 12:31:39",
+  "uptime": "up 1 week, 4 days, 16 hours, 25 minutes",
+  "uptime_seconds": 1009500.53,
+  "cpu": {
+    "load1": 0.02,
+    "load5": 0.16,
+    "load15": 0.18,
+    "cores": 8,
+    "percent": 0.2
+  },
+  "ram": {
+    "total_mb": 15991,
+    "used_mb": 7123,
+    "free_mb": 556,
+    "percent": 44.5
+  },
+  "disk": {
+    "total": "213G",
+    "used": "146G",
+    "free": "67G",
+    "percent": "69%"
+  },
+  "services": [
+    {
+      "name": "nginx",
+      "display": "Nginx (Docker)",
+      "status": "running",
+      "running": true,
+      "container": "ai-dev-team-platform-nginx-1"
+    },
+    {
+      "name": "orion-api",
+      "display": "Orion API (port 3510)",
+      "status": "running",
+      "running": true
+    },
+    {
+      "name": "chat-api",
+      "display": "Chat API (Docker)",
+      "status": "running",
+      "running": true,
+      "container": "ai-dev-team-platform-chat-api-1"
+    },
+    {
+      "name": "orchestrator-api",
+      "display": "Orchestrator API (Docker)",
+      "status": "running",
+      "running": true,
+      "container": "ai-dev-team-platform-orchestrator-api-1"
+    },
+    {
+      "name": "postgres",
+      "display": "PostgreSQL (Docker)",
+      "status": "running",
+      "running": true,
+      "container": "ai-dev-team-platform-postgres-1"
+    }
+  ],
+  "cron_log": [
+    "Thu Mar 19 12:29:53 PM UTC 2026 - Server status page initialized",
+    "Thu Mar 19 12:29:53 PM UTC 2026 - Cron log created",
+    "Thu Mar 19 12:29:53 PM UTC 2026 - System monitoring active",
+    "Thu Mar 19 12:29:53 PM UTC 2026 - Status page deployed",
+    "Thu Mar 19 12:29:53 PM UTC 2026 - All services checked"
+  ],
+  "docker_containers": [
+    {
+      "name": "ai-dev-team-platform-nginx-1",
+      "status": "Up 3 days (healthy)",
+      "image": "nginx:1.27-alpine"
+    },
+    {
+      "name": "ai-dev-team-platform-chat-api-1",
+      "status": "Up 5 days (healthy)",
+      "image": "ai-dev-team-platform-chat-api"
+    },
+    {
+      "name": "ai-dev-team-platform-orchestrator-api-1",
+      "status": "Up 5 days (healthy)",
+      "image": "ai-dev-team-platform-orchestrator-api"
+    },
+    {
+      "name": "ai-dev-team-platform-agent-executor-1",
+      "status": "Up 6 days (healthy)",
+      "image": "ai-dev-team-platform-agent-executor"
+    },
+    {
+      "name": "ai-dev-team-platform-coding-worker-1",
+      "status": "Up 6 days (healthy)",
+      "image": "ai-dev-team-platform-coding-worker"
+    },
+    {
+      "name": "ai-dev-team-platform-task-runner-1",
+      "status": "Up 6 days (healthy)",
+      "image": "ai-dev-team-platform-task-runner"
+    },
+    {
+      "name": "ai-dev-team-platform-qa-worker-1",
+      "status": "Up 6 days (healthy)",
+      "image": "ai-dev-team-platform-qa-worker"
+    },
+    {
+      "name": "ai-dev-team-platform-browser-worker-1",
+      "status": "Up 6 days (healthy)",
+      "image": "ai-dev-team-platform-browser-worker"
+    },
+    {
+      "name": "ai-dev-team-platform-planner-worker-1",
+      "status": "Up 6 days (healthy)",
+      "image": "ai-dev-team-platform-planner-worker"
+    },
+    {
+      "name": "ai-dev-team-platform-web-ui-1",
+      "status": "Up 6 days (healthy)",
+      "image": "ai-dev-team-platform-web-ui"
+    },
+    {
+      "name": "ai-dev-team-platform-ssh-worker-1",
+      "status": "Up 7 days (healthy)",
+      "image": "ai-dev-team-platform-ssh-worker"
+    },
+    {
+      "name": "ai-dev-team-platform-memory-service-1",
+      "status": "Up 7 days (healthy)",
+      "image": "ai-dev-team-platform-memory-service"
+    },
+    {
+      "name": "ai-dev-team-platform-approval-service-1",
+      "status": "Up 7 days (healthy)",
+      "image": "ai-dev-team-platform-approval-service"
+    },
+    {
+      "name": "ai-dev-team-platform-postgres-1",
+      "status": "Up 8 days (healthy)",
+      "image": "postgres:16-alpine"
+    },
+    {
+      "name": "ai-dev-team-platform-redis-1",
+      "status": "Up 8 days (healthy)",
+      "image": "redis:7-alpine"
+    },
+    {
+      "name": "ai-dev-team-platform-minio-1",
+      "status": "Up 8 days (healthy)",
+      "image": "minio/minio:latest"
+    }
+  ],
+  "server_ip": "2.56.240.170"
+}
