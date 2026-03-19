@@ -1661,18 +1661,47 @@ const Chat = {
                     // BUG-4 FIX: backend sends 'preview' field, also check result/output/summary/text
                     const resultText = evt.preview || evt.summary || evt.result || evt.output || evt.text || '';
                     const isError = evt.error || (evt.success === false);
+                    // FIX-UX: User-friendly error messages instead of raw JSON
+                    let displayText = resultText;
+                    let errorExplanation = '';
+                    if (isError) {
+                        const rawErr = evt.error || resultText || '';
+                        if (rawErr.includes('Invalid JSON arguments')) {
+                            displayText = '⚠️ Ошибка формата данных';
+                            errorExplanation = 'Агент отправил некорректные аргументы. Он попробует исправить на следующей итерации.';
+                        } else if (rawErr.includes('host and command are required')) {
+                            displayText = '⚠️ Не указан сервер или команда';
+                            errorExplanation = 'Агент забыл указать хост или команду для SSH. Будет повторная попытка.';
+                        } else if (rawErr.includes('host and path are required')) {
+                            displayText = '⚠️ Не указан путь к файлу';
+                            errorExplanation = 'Агент не указал путь файла на сервере. Будет повторная попытка.';
+                        } else if (rawErr.includes('url is required')) {
+                            displayText = '⚠️ Не указан URL';
+                            errorExplanation = 'Агент не указал URL для браузера. Будет повторная попытка.';
+                        } else if (rawErr.includes('timeout') || rawErr.includes('Timeout')) {
+                            displayText = '⏱️ Превышено время ожидания';
+                            errorExplanation = 'Операция заняла слишком много времени. Агент попробует снова.';
+                        } else if (rawErr.includes('Connection refused') || rawErr.includes('connection')) {
+                            displayText = '🔌 Ошибка подключения';
+                            errorExplanation = 'Не удалось подключиться к серверу. Агент попробует снова.';
+                        } else {
+                            displayText = '⚠️ Ошибка: ' + rawErr.substring(0, 80);
+                            errorExplanation = 'Агент обнаружил проблему и попробует другой подход.';
+                        }
+                    }
                     const _trDetail = {
                         tool: evt.tool || 'result',
-                        emoji: isError ? '❌' : '📄',
+                        emoji: isError ? '⚠️' : '📄',
                         elapsed: evt.elapsed,
-                        preview: resultText,
+                        preview: isError ? (displayText + (errorExplanation ? '\n' + errorExplanation : '')) : resultText,
                         screenshot: evt.screenshot || null,
-                        url: evt.url || null
+                        url: evt.url || null,
+                        rawError: isError ? (evt.error || resultText) : null
                     };
                     ActivityPanel.addToGroup(
                         isError ? 'error' : 'tool-result',
-                        isError ? '❌' : '📄',
-                        resultText.substring(0, 300),
+                        isError ? '⚠️' : '📄',
+                        isError ? (displayText + (errorExplanation ? ' — ' + errorExplanation : '')) : resultText.substring(0, 300),
                         _trDetail
                     );
                     // Screenshot from browser tools
@@ -2755,7 +2784,8 @@ const ActivityPanel = {
             saved.forEach(item => {
                 this.addLineRaw(item.type, item.emoji, item.text, item.time, item.detail);
             });
-            log.scrollTop = log.scrollHeight;
+            const _logWrap3 = $('activity-log-wrap');
+            if (_logWrap3) _logWrap3.scrollTop = _logWrap3.scrollHeight;
             this.show();
             this.setStatus('done');
         } catch(e) {}
@@ -2845,7 +2875,9 @@ const ActivityPanel = {
                 localStorage.setItem(key, JSON.stringify(saved));
             } catch(e) {}
         }
-        log.scrollTop = log.scrollHeight;
+        // Scroll the wrap container for proper scrolling
+        const logWrap = $('activity-log-wrap');
+        if (logWrap) logWrap.scrollTop = logWrap.scrollHeight;
     },
     showDetail(lineEl, data) {
         // Deactivate previous
@@ -2986,7 +3018,8 @@ const ActivityPanel = {
         line.appendChild(emojiEl);
         line.appendChild(content_wrap);
         log.appendChild(line);
-        log.scrollTop = log.scrollHeight;
+        const _logWrap4 = $('activity-log-wrap');
+        if (_logWrap4) _logWrap4.scrollTop = _logWrap4.scrollHeight;
     },
 
     addScreenshot(url, screenshotData, status) {
@@ -3019,7 +3052,8 @@ const ActivityPanel = {
         line.appendChild(emojiEl);
         line.appendChild(content);
         log.appendChild(line);
-        log.scrollTop = log.scrollHeight;
+        const _logWrap2 = $('activity-log-wrap');
+        if (_logWrap2) _logWrap2.scrollTop = _logWrap2.scrollHeight;
     },
 
     updateProgress(current, total, steps = []) {
@@ -3077,7 +3111,8 @@ const ActivityPanel = {
         this._currentGroup = group;
         this._currentGroupBody = body;
         this._groupItemCount = 0;
-        log.scrollTop = log.scrollHeight;
+        const _logWrap1 = $('activity-log-wrap');
+        if (_logWrap1) _logWrap1.scrollTop = _logWrap1.scrollHeight;
     },
     addToGroup(type, emoji, text, detailData = null) {
         const target = this._currentGroupBody || $('activity-log');
@@ -3115,7 +3150,9 @@ const ActivityPanel = {
                 localStorage.setItem(key, JSON.stringify(saved));
             } catch(e) {}
         }
-        target.scrollTop = target.scrollHeight;
+        // Scroll the wrap container, not the log itself
+        const logWrap = $('activity-log-wrap');
+        if (logWrap) logWrap.scrollTop = logWrap.scrollHeight;
     },
         showTakeover(message, screenshotData) {
         const panel = $('activity-panel');
