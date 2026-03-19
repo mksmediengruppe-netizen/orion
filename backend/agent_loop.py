@@ -5137,7 +5137,188 @@ class MultiAgentLoop(AgentLoop):
                 "agent": phase_name,
                 "role": agent_key
             })
-        
+
+            # ── QUALITY CHECK CYCLE: after deploy phases ──────────────────────────────
+            # Detect if this was a deploy phase by agent key or phase name
+            _is_deploy_phase = (
+                agent_key.lower() in ('devops', 'deployer', 'deploy') or
+                any(kw in phase_name.lower() for kw in ('деплой', 'deploy', 'настройк', 'сервер', 'nginx'))
+            )
+            # Only run quality check if there's a server URL available
+            _qc_host = self.ssh_credentials.get('host', '')
+            if _is_deploy_phase and _qc_host and _current_orion_mode not in PRO_MODES:
+                import logging as _qc_log
+                _qc_log.info(f"[QualityCheck] Starting post-deploy quality check for phase: {phase_name}")
+                yield self._sse({"type": "content", "text": "\n\n🔍 **Quality Check**: Проверяю результат деплоя...\n", "agent": "Quality Check"})
+
+                _qc_url = f"http://{_qc_host}"
+                _qc_max_iterations = 2
+                _qc_iteration = 0
+                _qc_html_content = None  # Will store current HTML from phase_results
+
+                # Extract HTML content from phase results (designer/developer phases)
+                for _prev_phase_name, _prev_phase_text in phase_results.items():
+                    if any(kw in _prev_phase_name.lower() for kw in ('дизайн', 'верстк', 'разработк', 'design', 'develop')):
+                        _qc_html_content = _prev_phase_text
+                        break
+
+                while _qc_iteration < _qc_max_iterations:
+                    _qc_iteration += 1
+                    _qc_log.info(f"[QualityCheck] Iteration {_qc_iteration}/{_qc_max_iterations}")
+
+                    # Step 1: MiMo (current model = hands model) takes screenshot
+                    yield self._sse({"type": "content", "text": f"🌐 Открываю {_qc_url} для проверки...\n", "agent": "Quality Check"})
+                    try:
+                        _nav_result = self._execute_tool('browser_navigate', {'url': _qc_url})
+                        _screenshot_b64 = _nav_result.get('screenshot', '')
+                        if not _screenshot_b64:
+                            # Try explicit screenshot
+                            _ss_result = self._execute_tool('browser_screenshot', {})
+                            _screenshot_b64 = _ss_result.get('screenshot', '')
+                    except Exception as _qc_e:
+                        _qc_log.warning(f"[QualityCheck] Browser error: {_qc_e}")
+                        break
+
+                    if not _screenshot_b64:
+                        _qc_log.warning("[QualityCheck] No screenshot obtained, skipping quality check")
+                        break
+
+                    # Step 2: Send screenshot to MiniMax for design review
+                    yield self._sse({"type": "content", "text": "🧠 MiniMax проверяет дизайн...\n", "agent": "Quality Check"})
+                    _b64_clean = _screenshot_b64
+                    if 'base64,' in _b64_clean:
+                        _b64_clean = _b64_clean.split('base64,')[1]
+
+                    _review_messages = [
+                        {"role": "user", "content": [
+                            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{_b64_clean}"}},
+                            {"type": "text", "text": (
+                                "Посмотри на этот скриншот сайта. "
+                                "CSS работает? Дизайн выглядит правильно? "
+                                "Если нет — опиши конкретно что не так и напиши ИСПРАВИТЬ. "
+                                "Если всё хорошо — напиши ХОРОШО. "
+                                "Отвечай кратко."
+                            )}
+                        ]}
+                    ]
+
+                    try:
+                        _review_headers = {
+                            "Authorization": f"Bearer {self.api_key}",
+                            "Content-Type": "application/json",
+                            "HTTP-Referer": "https://orion.mksitdev.ru",
+                            "X-Title": "ORION Digital v1.0"
+                        }
+                        _review_payload = {
+                            "model": "minimax/minimax-m2.5",
+                            "messages": _review_messages,
+                            "temperature": 0.1,
+                            "max_tokens": 800,
+                            "stream": False,
+                        }
+                        import requests as _qc_requests
+                        _review_resp = _qc_requests.post(
+                            self.api_url, headers=_review_headers,
+                            json=_review_payload, timeout=30
+                        )
+                        _review_text = ""
+                        if _review_resp.status_code == 200:
+                            _review_text = _review_resp.json().get("choices", [{}])[0].get("message", {}).get("content", "")
+                    except Exception as _rv_e:
+                        _qc_log.warning(f"[QualityCheck] MiniMax review error: {_rv_e}")
+                        break
+
+                    _qc_log.info(f"[QualityCheck] MiniMax review: {_review_text[:200]}")
+                    yield self._sse({"type": "content", "text": f"💬 MiniMax: {_review_text[:300]}\n", "agent": "Quality Check"})
+
+                    # Step 3: Check if MiniMax says there's a problem
+                    _needs_fix = 'ИСПРАВИТЬ' in _review_text.upper() or 'FIX' in _review_text.upper() or 'ИСПРАВЬ' in _review_text.upper()
+                    if not _needs_fix:
+                        _qc_log.info("[QualityCheck] MiniMax approved the design, no fix needed")
+                        yield self._sse({"type": "content", "text": "✅ Дизайн одобрен MiniMax\n", "agent": "Quality Check"})
+                        break
+
+                    # Step 4: MiniMax fixes the HTML
+                    yield self._sse({"type": "content", "text": "🔧 MiniMax исправляет HTML...\n", "agent": "Quality Check"})
+                    _fix_messages = [
+                        {"role": "user", "content": [
+                            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{_b64_clean}"}},
+                            {"type": "text", "text": (
+                                f"Проблема: {_review_text}\n\n"
+                                "Исправь HTML/CSS. Верни ТОЛЬКО полный исправленный HTML файл, без объяснений. "
+                                "Начни с <!DOCTYPE html> и заверши </html>."
+                                + (f"\n\nТекущий HTML:\n{_qc_html_content[:8000]}" if _qc_html_content else "")
+                            )}
+                        ]}
+                    ]
+
+                    try:
+                        _fix_payload = {
+                            "model": "minimax/minimax-m2.5",
+                            "messages": _fix_messages,
+                            "temperature": 0.3,
+                            "max_tokens": 16000,
+                            "stream": False,
+                        }
+                        _fix_resp = _qc_requests.post(
+                            self.api_url, headers=_review_headers,
+                            json=_fix_payload, timeout=60
+                        )
+                        _fixed_html = ""
+                        if _fix_resp.status_code == 200:
+                            _fixed_html = _fix_resp.json().get("choices", [{}])[0].get("message", {}).get("content", "")
+                            # Extract HTML if wrapped in markdown code block
+                            if '```html' in _fixed_html:
+                                _fixed_html = _fixed_html.split('```html')[1].split('```')[0].strip()
+                            elif '```' in _fixed_html:
+                                _fixed_html = _fixed_html.split('```')[1].split('```')[0].strip()
+                    except Exception as _fx_e:
+                        _qc_log.warning(f"[QualityCheck] MiniMax fix error: {_fx_e}")
+                        break
+
+                    if not _fixed_html or not _fixed_html.strip().startswith('<'):
+                        _qc_log.warning("[QualityCheck] MiniMax did not return valid HTML")
+                        break
+
+                    # Step 5: MiMo redeploys the fixed HTML
+                    yield self._sse({"type": "content", "text": "🚀 Деплою исправленный HTML...\n", "agent": "Quality Check"})
+
+                    # Find the deployed path from phase_results or use default
+                    _deploy_path = "/var/www/html/index.html"
+                    for _pr_name, _pr_text in phase_results.items():
+                        import re as _qc_re
+                        _path_match = _qc_re.search(r'/var/www/[\w./\-]+\.html', _pr_text)
+                        if _path_match:
+                            _deploy_path = _path_match.group(0)
+                            break
+
+                    # Switch to MiMo (hands model) for deployment
+                    _saved_model = self.model
+                    try:
+                        from orchestrator_v2 import get_model_for_agent
+                        self.model = get_model_for_agent('devops', _current_orion_mode)
+                    except Exception:
+                        pass
+
+                    _deploy_result = self._execute_tool('file_write', {
+                        'host': _qc_host,
+                        'username': self.ssh_credentials.get('username', 'root'),
+                        'password': self.ssh_credentials.get('password', ''),
+                        'path': _deploy_path,
+                        'content': _fixed_html
+                    })
+                    self.model = _saved_model
+
+                    if _deploy_result.get('success'):
+                        _qc_html_content = _fixed_html  # Update for next iteration
+                        yield self._sse({"type": "content", "text": f"✅ Исправленный HTML задеплоен в {_deploy_path}\n", "agent": "Quality Check"})
+                    else:
+                        _qc_log.warning(f"[QualityCheck] Redeploy failed: {_deploy_result}")
+                        break
+
+                _qc_log.info(f"[QualityCheck] Completed after {_qc_iteration} iteration(s)")
+            # ── END QUALITY CHECK CYCLE ──────────────────────────────────────────────
+
         # All phases complete
         yield self._sse({
             "type": "task_complete",
