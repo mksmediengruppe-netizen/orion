@@ -560,6 +560,16 @@ def get_agent_prompt(key):
     return AGENT_PROMPTS.get(key, AGENT_PROMPTS["developer"])
 
 def get_model_for_agent(agent_key, orion_mode="turbo_standard", task_hint=""):
+    # ── DUAL-BRAIN: Turbo режимы используют MiniMax + MiMo ──
+    if orion_mode in ("turbo_standard", "turbo_premium"):
+        _ak = agent_key.lower().strip()  # normalize to lowercase
+        # HANDS agents (SSH, FTP, деплой) → MiMo-V2-Flash
+        _hands_agents = {"devops", "developer", "integrator"}
+        # BRAIN agents (дизайн, анализ, тексты) → MiniMax M2.5
+        if _ak in _hands_agents:
+            return "xiaomi/mimo-v2-flash"  # MiMo для операций
+        else:
+            return "minimax/minimax-m2.5"  # MiniMax для мышления
     if agent_key=="designer": return MODEL_MAP["sonnet"]  # Sonnet делает красивый HTML/CSS
     if agent_key=="copywriter": return MODEL_MAP["sonnet"]  # ПАТЧ W2-3
     if agent_key=="analyst" and "pro" in orion_mode and "premium" in orion_mode: return MODEL_MAP["sonnet"]

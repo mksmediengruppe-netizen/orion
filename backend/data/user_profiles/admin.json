@@ -1,6 +1,6 @@
 {
   "user_id": "admin",
-  "chat_count": 460,
+  "chat_count": 472,
   "facts": [
     "Пользователя зовут Тестер5",
     "Работает с Elixir и Phoenix",
@@ -50,7 +50,8 @@
     "Имеет SSH-доступ к серверу с IP 45.67.57.175 под пользователем root",
     "Webroot сайта находится по пути /var/www/asmksm58.beget.tech/html",
     "Использует хостинг Beget",
-    "Домен сайта: asmksm58.beget.tech"
+    "Домен сайта: asmksm58.beget.tech",
+    "Пользователь занимается деплоем сайта для строительной компании 'Северный ветер'"
   ],
   "preferences": {
     "visual_theme": "закаты над горами",
@@ -106,7 +107,17 @@
     "color_scheme": "тёмно-синий #1a365d + белый + оранжевый #ed8936",
     "font": "Inter",
     "hosting": "Beget",
-    "server_ip": "45.67.57.175"
+    "server_ip": "45.67.57.175",
+    "css_framework": "Tailwind CSS CDN",
+    "animations": "AOS (fade-up, fade-right, fade-left)",
+    "icons": "Lucide",
+    "color_primary": "#1a365d",
+    "color_accent": "#ed8936",
+    "sections_count": 8,
+    "mobile_required": true,
+    "ssl": "certbot",
+    "color_background": "белый",
+    "color_base": "#ffffff"
   },
   "expertise_level": "unknown"
 }

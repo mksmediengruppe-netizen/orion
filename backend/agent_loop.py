@@ -1649,7 +1649,7 @@ class AgentLoop:
                     break
             if _next_tool:
                 _model = _get_dual_brain_model(_next_tool, _orion_mode, _model)
-                _log.debug(f"[DUAL-BRAIN] tool={_next_tool} → model={_model}")
+                logging.debug(f"[DUAL-BRAIN] tool={_next_tool} → model={_model}")
             else:
                 # Нет tool call → думаем → MiniMax
                 if _orion_mode in ("turbo_standard", "turbo_premium"):
