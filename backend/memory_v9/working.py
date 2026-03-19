@@ -141,6 +141,40 @@ class ContextCompactor:
             return False
         return True
 
+    @staticmethod
+    def _fix_tool_pairs(messages: List[Dict]) -> List[Dict]:
+        """Ensure every tool_result has a matching tool_use in the previous assistant message.
+        Remove orphan tool_result blocks that would cause Claude 400 errors."""
+        cleaned = []
+        for i, msg in enumerate(messages):
+            if msg.get('role') == 'tool':
+                # Find the tool_use_id this result refers to
+                tool_use_id = msg.get('tool_call_id', '')
+                # Check if there's a matching tool_use in preceding assistant messages
+                found = False
+                for j in range(i - 1, -1, -1):
+                    prev = messages[j]
+                    if prev.get('role') == 'assistant':
+                        # Check tool_calls list
+                        for tc in (prev.get('tool_calls') or []):
+                            if tc.get('id') == tool_use_id:
+                                found = True
+                                break
+                        # Also check content blocks for Claude format
+                        if not found and isinstance(prev.get('content'), list):
+                            for block in prev['content']:
+                                if isinstance(block, dict) and block.get('type') == 'tool_use' and block.get('id') == tool_use_id:
+                                    found = True
+                                    break
+                        break  # Only check the immediately preceding assistant message
+                if found:
+                    cleaned.append(msg)
+                else:
+                    logger.warning(f"[COMPACT] Removed orphan tool_result: {tool_use_id}")
+            else:
+                cleaned.append(msg)
+        return cleaned
+
     def compact(self, messages: List[Dict]) -> List[Dict]:
         if not self._call_llm or len(messages) < 10:
             return messages
@@ -198,7 +232,10 @@ class ContextCompactor:
             ])
             summary_msg = {"role": "assistant", "content": f"[СЖАТАЯ ИСТОРИЯ]\n{summary}"}
             logger.info(f"[COMPACT] Сжали {len(middle)} сообщений в 1 summary ({len(summary)} chars)")
-            return system + keep_first + [summary_msg] + keep_last
+            result = system + keep_first + [summary_msg] + keep_last
+            # ── FIX: Validate tool_use/tool_result pairs ──
+            result = self._fix_tool_pairs(result)
+            return result
         except Exception as e:
             logger.warning(f"Compaction failed: {e}")
             return messages
