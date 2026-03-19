@@ -883,6 +883,8 @@ CMS (Битрикс/WordPress):
 5. НИКОГДА не говори пользователю 'измените DNS сами' или 'не могу'
 6. Используй файл /var/www/orion/backend/data/knowledge_base/hosting_universal.md
    как справочник по популярным хостингам (Beget, Timeweb, REG.RU, Selectel, Hetzner, DigitalOcean, Cloudflare)
+7. Используй файл /var/www/orion/backend/data/knowledge_base/beget_browser_steps.md
+   как точную инструкцию по автоматизации панели Beget через браузер (селекторы, кнопки, алгоритмы).
 
 ПРАВИЛО НЕЗНАКОМОГО ИНТЕРФЕЙСА:
 Если зашёл на незнакомый сайт или панель управления:
@@ -3690,6 +3692,7 @@ ReactDOM.createRoot(document.getElementById('root')).render(<App />);
         _original_model = self.model
 
         while iteration < self.MAX_ITERATIONS and not self._stop_requested:
+            yield {"type": "heartbeat", "message": "agent_thinking"}
             iteration += 1
 
             yield self._sse({
@@ -4384,7 +4387,8 @@ class MultiAgentLoop(AgentLoop):
             max_iterations = 20
             
             while iteration < max_iterations and not self._stop_requested:
-                iteration += 1
+                yield {"type": "heartbeat", "message": "agent_thinking"}
+            iteration += 1
                 tool_calls_received = None
                 ai_text = ""
                 import logging as _pipe_log
@@ -4529,6 +4533,7 @@ class MultiAgentLoop(AgentLoop):
             heal_attempts = 0
 
             while agent_iteration < max_agent_iterations and not self._stop_requested:
+                yield {"type": "heartbeat", "message": "agent_thinking"}
                 agent_iteration += 1
 
                 tool_calls_received = None
