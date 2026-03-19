@@ -1449,6 +1449,7 @@ def send_message(chat_id):
             "выполни", "дай", "покажи", "продолжи", "запусти", "открой",
             "найди", "проверь", "сервер", "код", "файл", "лендинг", "сайт",
             "парсер", "бот", "скрипт", "api", "база", "домен",
+            "скриншот", "screenshot", "браузер", "browser", "страниц",
         ])
     )
     # Pro/Architect: bypass quick checks — model decides everything
@@ -1504,6 +1505,13 @@ def send_message(chat_id):
         is_agent_task = True
         mode = "deploy"
         logging.info(f"[send_message] BUG-1 FIX v2: SSH keywords detected + has_ssh → forced agent mode")
+    # ═══ BROWSER FIX: Browser/screenshot requests → force lite_agent with tools ═══
+    _browser_kw = ["скриншот", "screenshot", "открой сайт", "открой страниц",
+                   "покажи сайт", "покажи страниц", "зайди на", "перейди на",
+                   "browser", "браузер", "веб-страниц", "webpage"]
+    if not is_agent_task and any(kw in user_message.lower() for kw in _browser_kw):
+        mode = "file"  # Forces lite_agent path
+        logging.info(f"[send_message] BROWSER FIX: browser/screenshot keywords → forced file mode (lite_agent)")
     # URL + лендинг/сайт/создай → file mode → lite_agent (даже если is_browser_task)
     _landing_kw2 = ["лендинг", "landing", "сайт", "создай", "сделай", "сгенерируй", "напиши"]
     if has_url and any(kw in user_message.lower() for kw in _landing_kw2) and mode in ("chat", "research"):
