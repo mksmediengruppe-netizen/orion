@@ -203,7 +203,11 @@ const API = {
 
         const res = await fetch(API_BASE + path, opts);
         if (res.status === 401) {
-            // BUG-12v2: Try silent re-login before logout
+            // BUG-12v4: Cache chats IMMEDIATELY before any logout
+            if (state.chats && state.chats.length) {
+                try { localStorage.setItem('orion_chats_cache', JSON.stringify(state.chats)); } catch(e) {}
+            }
+            // Try silent re-login before logout
             const reloginOk = await Auth.silentRelogin();
             if (reloginOk) {
                 // Retry the original request with new token
@@ -316,26 +320,22 @@ const Auth = {
             if (state.user.monthly_limit) state.monthlyLimit = state.user.monthly_limit;
             if (state.user.total_spent !== undefined) state.totalCost = state.user.total_spent;
         }
-        // BUG-12v2: Restore cached chats immediately (before API loads)
+        // BUG-12v4: Restore cached chats immediately (before API loads)
         const cachedChats = localStorage.getItem('orion_chats_cache');
-        if (cachedChats && !state.chats.length) {
+        if (cachedChats) {
             try {
-                state.chats = JSON.parse(cachedChats);
-                console.log('BUG-12v2: Restored', state.chats.length, 'chats from cache');
-            } catch(e) {}
-        }
-        // BUG-12v3: Always restore chats from cache immediately (before API)
-        const cachedChatsInit = localStorage.getItem('orion_chats_cache');
-        if (cachedChatsInit) {
-            try {
-                const parsed = JSON.parse(cachedChatsInit);
+                const parsed = JSON.parse(cachedChats);
                 if (parsed && parsed.length) {
                     state.chats = parsed;
-                    console.log('BUG-12v3: Pre-loaded', state.chats.length, 'chats from cache');
+                    console.log('BUG-12v4: Pre-loaded', state.chats.length, 'chats from cache');
                 }
             } catch(e) {}
         }
         UI.init();
+        // BUG-12v4: Render cached chats immediately, then load fresh from API
+        if (state.chats.length) {
+            ChatList.render();
+        }
         ChatList.load();
         UI.updateUserInfo();
         SSHSettings.init();
@@ -360,17 +360,27 @@ const Auth = {
 
     // BUG-12v2: Soft logout — save chats to localStorage, show login
     softLogout() {
-        // Save chats before clearing
-        if (state.chats.length) {
-            localStorage.setItem('orion_chats_cache', JSON.stringify(state.chats));
+        // BUG-12v4: Always cache chats before any state changes
+        if (state.chats && state.chats.length) {
+            try { localStorage.setItem('orion_chats_cache', JSON.stringify(state.chats)); } catch(e) {}
+            console.log('BUG-12v4: Cached', state.chats.length, 'chats before softLogout');
         }
         state.token = null;
         state.user = null;
-        // DON'T clear state.chats — keep them visible
+        // DON'T clear state.chats — keep them for immediate display after re-login
         localStorage.removeItem('orion_token');
         // Don't remove orion_user — needed for re-login
         this.showAuthScreen();
-        $('auth-login').value = '';
+        // BUG-12v4: Pre-fill login if we have saved creds
+        const savedCreds = localStorage.getItem('orion_creds');
+        if (savedCreds) {
+            try {
+                const { email } = JSON.parse(savedCreds);
+                if (email) $('auth-login').value = email;
+            } catch(e) {}
+        } else {
+            $('auth-login').value = '';
+        }
         $('auth-password').value = '';
     },
 
@@ -895,15 +905,21 @@ const Sidebar = {
 /* ── CHAT LIST ────────────────────────────────────────────── */
 const ChatList = {
     async load() {
+        // BUG-12v4: Save current chats BEFORE any API call
+        const _prevChats = [...state.chats];
         try {
             const data = await API.get('/chats');
-            // Normalize: backend may return [{chat: {...}}, ...] or [{id, ...}, ...]
-            const rawChats = data.chats || data || [];
-            const newChats = rawChats.map(c => c.chat || c);
-            // BUG-12v3: If API returned empty but we have cached chats, keep cache
-            if (newChats.length === 0 && state.chats.length > 0) {
-                console.log('BUG-12v3: API returned 0 chats but we have', state.chats.length, 'in state — keeping');
-            } else if (newChats.length === 0) {
+            // Normalize: backend may return {chats: [...]} or [...]
+            const rawChats = Array.isArray(data) ? data : (data.chats || data || []);
+            const newChats = Array.isArray(rawChats) ? rawChats.map(c => c.chat || c) : [];
+            
+            if (newChats.length > 0) {
+                state.chats = newChats;
+            } else if (_prevChats.length > 0) {
+                // BUG-12v4: API returned empty but we had chats — keep them
+                state.chats = _prevChats;
+                console.log('BUG-12v4: API returned 0 chats, keeping', _prevChats.length, 'from state');
+            } else {
                 // Try restore from localStorage cache
                 const cached = localStorage.getItem('orion_chats_cache');
                 if (cached) {
@@ -911,18 +927,12 @@ const ChatList = {
                         const parsedCache = JSON.parse(cached);
                         if (parsedCache && parsedCache.length) {
                             state.chats = parsedCache;
-                            console.log('BUG-12v3: Restored', state.chats.length, 'chats from cache (API empty)');
-                        } else {
-                            state.chats = newChats;
+                            console.log('BUG-12v4: Restored', state.chats.length, 'chats from cache');
                         }
-                    } catch(e) { state.chats = newChats; }
-                } else {
-                    state.chats = newChats;
+                    } catch(e) { /* keep empty */ }
                 }
-            } else {
-                state.chats = newChats;
             }
-            // BUG-12v2: Cache chats in localStorage for resilience
+            // Cache chats in localStorage for resilience
             if (state.chats.length) {
                 try { localStorage.setItem('orion_chats_cache', JSON.stringify(state.chats)); } catch(e) {}
             }
@@ -932,11 +942,18 @@ const ChatList = {
             this.render();
         } catch (e) {
             console.warn('ChatList.load error:', e);
-            // BUG-12 FIX: Don't clear existing chats on load error
-            // Only render empty if we never had chats
-            if (!state.chats.length) {
-                this.render();
+            // BUG-12v4: NEVER clear chats on error — restore previous state
+            if (_prevChats.length > 0) {
+                state.chats = _prevChats;
             } else {
+                // Try localStorage cache as last resort
+                const cached = localStorage.getItem('orion_chats_cache');
+                if (cached) {
+                    try { const p = JSON.parse(cached); if (p && p.length) state.chats = p; } catch(e2) {}
+                }
+            }
+            this.render();
+            if (e.message !== 'Unauthorized') {
                 Toast.show('Ошибка обновления списка чатов', 'error');
             }
         }
@@ -948,8 +965,22 @@ const ChatList = {
         container.innerHTML = '';
 
         if (!chats.length) {
-            container.innerHTML = '<div class="empty-state" style="padding:20px"><div class="empty-state-icon">💬</div><div class="empty-state-desc">Нет чатов. Начните новый!</div></div>';
-            return;
+            // BUG-12v4: Last chance — try cache before showing empty
+            const cached = localStorage.getItem('orion_chats_cache');
+            if (cached) {
+                try {
+                    const parsed = JSON.parse(cached);
+                    if (parsed && parsed.length) {
+                        state.chats = parsed;
+                        chats = parsed;
+                        console.log('BUG-12v4: render() recovered', chats.length, 'chats from cache');
+                    }
+                } catch(e) {}
+            }
+            if (!chats.length) {
+                container.innerHTML = '<div class="empty-state" style="padding:20px"><div class="empty-state-icon">💬</div><div class="empty-state-desc">Нет чатов. Начните новый!</div></div>';
+                return;
+            }
         }
 
         const groups = Utils.groupChatsByDate(chats);
@@ -1210,7 +1241,9 @@ const Chat = {
             // BUG-12 FIX: Restore previous state on error instead of leaving empty
             console.warn('Chat.open error:', e);
             if (e.message === 'Unauthorized') {
-                // Token expired — don't restore, logout already happened
+                // BUG-12v4: Token expired — restore chats before logout flow
+                state.messages = prevMessages;
+                state.currentChatId = prevChatId;
                 return;
             }
             state.currentChatId = prevChatId;

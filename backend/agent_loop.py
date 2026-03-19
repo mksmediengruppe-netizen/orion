@@ -1386,7 +1386,41 @@ class AgentLoop:
             content = ""
             tool_calls_data = {}
 
-            for line in resp.iter_lines():
+            # PATCH-STREAM-V2: Use threading.Timer to force-close hung streams
+            import time as _time
+            import threading as _threading
+            _stream_deadline = _time.monotonic() + 180  # 3 min max per LLM call
+            _stream_timed_out = _threading.Event()
+
+            def _kill_stream():
+                _stream_timed_out.set()
+                try:
+                    resp.close()
+                except Exception:
+                    pass
+                logger.warning("[PATCH-STREAM-V2] Force-closed hung stream after 180s")
+
+            _stream_timer = _threading.Timer(180, _kill_stream)
+            _stream_timer.daemon = True
+            _stream_timer.start()
+
+            # Also set socket timeout as backup
+            try:
+                _raw = resp.raw
+                if hasattr(_raw, '_fp') and hasattr(_raw._fp, 'fp'):
+                    _inner = _raw._fp.fp
+                    if hasattr(_inner, 'raw') and hasattr(_inner.raw, '_sock'):
+                        _inner.raw._sock.settimeout(90)
+                    elif hasattr(_inner, '_sock'):
+                        _inner._sock.settimeout(90)
+            except Exception:
+                pass
+
+            try:
+              for line in resp.iter_lines():
+                if _stream_timed_out.is_set() or _time.monotonic() > _stream_deadline:
+                    logger.warning("[PATCH-STREAM-V2] Stream deadline exceeded, breaking")
+                    break
                 if not line:
                     continue
                 line_str = line.decode("utf-8", errors="replace")
@@ -1438,6 +1472,12 @@ class AgentLoop:
 
                 except json.JSONDecodeError:
                     continue
+            finally:
+              _stream_timer.cancel()
+              try:
+                  resp.close()
+              except Exception:
+                  pass
 
             if tool_calls_data:
                 tool_calls = []
@@ -3017,9 +3057,13 @@ ReactDOM.createRoot(document.getElementById('root')).render(<App />);
                 return None
 
         # ── Дизайн (баннер для Instagram и т.д.) ──
+        # Skip force_tool if message contains SSH/deploy instructions
+        _skip_force_kw = ["ssh", "deploy", "деплой", "сервер", "nginx", "root@", "задеплой"]
+        if any(kw in msg for kw in _skip_force_kw):
+            return None
         _design_triggers = [
             "баннер для instagram", "баннер для инстаграм", "пост для instagram",
-            "пост для инстаграм", "визитк", "обложк", "флаер", "плакат",
+            "пост для инстаграм", "обложк", "флаер", "плакат",
         ]
 
         if any(t in msg for t in _design_triggers):
@@ -3596,6 +3640,7 @@ ReactDOM.createRoot(document.getElementById('root')).render(<App />);
 
 
         # ══ FORCE TOOL — принудительный вызов инструмента ══
+        logger.info("[DEBUG] Starting force_tool check")
         _force_tool_result = self._check_force_tool(user_message, file_content or "")
         if _force_tool_result:
             for _ft_event in _force_tool_result:
@@ -3614,7 +3659,7 @@ ReactDOM.createRoot(document.getElementById('root')).render(<App />);
                 )},
                 {"role": "user", "content": f"Задача: {user_message[:1000]}"}
             ]
-            _plan_raw = self._call_ai_simple(_plan_prompt)
+            logger.info("[PATCH-W1-2] Calling AI for plan..."); _plan_raw = self._call_ai_simple(_plan_prompt)
             if _plan_raw:
                 _plan_raw = _plan_raw.strip()
                 if _plan_raw.startswith("```"):
@@ -3635,7 +3680,7 @@ ReactDOM.createRoot(document.getElementById('root')).render(<App />);
             logger.debug(f"[PATCH-W1-2] Plan generation failed: {_plan_err}")
 
         # Agent loop with LangGraph state tracking
-        iteration = 0
+        logger.info("[DEBUG] Starting iteration loop"); iteration = 0
         full_response_text = ""
         heal_attempts = 0
         # ── ANTI-LOOP: track repeated tool calls ──
@@ -3658,6 +3703,7 @@ ReactDOM.createRoot(document.getElementById('root')).render(<App />);
             ai_text = ""
 
             # ── BUG-1 FIX: before_iteration (GoalAnchor + Compaction) ──
+            logger.info(f"[DEBUG-IT] iteration={iteration}, about to call before_iteration")
             if self.memory:
                 try:
                     messages = self.memory.before_iteration(messages, iteration, self.MAX_ITERATIONS)
@@ -3682,7 +3728,9 @@ ReactDOM.createRoot(document.getElementById('root')).render(<App />);
                         _sys = _sys[:_sys.index("\n\nДОСТУПЫ К СЕРВЕРУ")]
                     messages[0]["content"] = _sys + _creds_block
 
+            logger.info(f"[DEBUG-IT] iteration={iteration}, credentials injected, about to call AI stream")
             try:
+                logger.info(f"[DEBUG] Calling AI stream, iteration {iteration}, messages: {len(messages)}")
                 for event in self._call_ai_stream(messages, tools=TOOLS_SCHEMA):
                     if event["type"] == "text_delta":
                         ai_text += event["text"]

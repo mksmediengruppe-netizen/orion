@@ -512,6 +512,8 @@ class Orchestrator:
             plan = json.loads(text)
             logging.info(f"[Orchestrator._parse_json] json.loads OK, mode={plan.get('mode')}")
             plan.setdefault("phases",[{"name":"Выполнение","agents":["developer"],"model":"deepseek"}])
+            if not plan["phases"]:
+                plan["phases"] = [{"name":"Выполнение","agents":["developer"],"model":"deepseek"}]
             plan.setdefault("mode","single" if len(plan["phases"])==1 else "multi_sequential")
             plan.setdefault("primary_model",plan["phases"][0].get("model","deepseek"))
             plan.setdefault("primary_agent",plan["phases"][0].get("agents",["developer"])[0])
@@ -536,6 +538,8 @@ class Orchestrator:
                     plan = json.loads(match.group())
                     logging.info(f"[Orchestrator._parse_json] Regex parse OK")
                     plan.setdefault("phases",[{"name":"Выполнение","agents":["developer"],"model":"deepseek"}])
+                    if not plan["phases"]:
+                        plan["phases"] = [{"name":"Выполнение","agents":["developer"],"model":"deepseek"}]
                     plan.setdefault("mode","single" if len(plan["phases"])==1 else "multi_sequential")
                     plan.setdefault("primary_model",plan["phases"][0].get("model","deepseek"))
                     plan.setdefault("primary_agent",plan["phases"][0].get("agents",["developer"])[0])

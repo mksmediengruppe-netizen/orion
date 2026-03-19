@@ -204,6 +204,22 @@ SKIP_DIRS = {
     '.idea', '.vscode', '.DS_Store',
 }
 
+# Helper: ISO timestamp
+def _now_iso():
+    return datetime.now(timezone.utc).isoformat()
+
+# Helper: calculate cost for Pro/Architect models
+def _calc_cost(tokens_in, tokens_out, model_name):
+    """Calculate cost based on model pricing."""
+    PRICING = {
+        'anthropic/claude-sonnet-4.6': (3.00, 15.00),
+        'anthropic/claude-opus-4': (15.00, 75.00),
+        'openai/gpt-4.1-mini': (0.26, 0.38),
+        'openai/gpt-4.1-nano': (0.10, 0.40),
+    }
+    in_price, out_price = PRICING.get(model_name, (3.00, 15.00))
+    return round((tokens_in / 1_000_000) * in_price + (tokens_out / 1_000_000) * out_price, 6)
+
 # ── Database Layer ─────────────────────────────────────────────────────
 
 _DEFAULT_DB = {
@@ -1588,17 +1604,18 @@ def send_message(chat_id):
                 # Save response
                 if full_response:
                     chat["messages"].append({"role": "assistant", "content": full_response, "created_at": _now_iso()})
-                    _save_db()
+                    _save_db(db)
                 # Cost tracking
                 _cost = _calc_cost(tokens_in, tokens_out, _pro_agent_model)
                 chat["total_cost"] = chat.get("total_cost", 0) + _cost
-                _save_db()
+                _save_db(db)
                 yield f"data: {json.dumps({'type': 'done', 'cost': _cost})}" + "\n\n"
         
         return Response(stream_with_context(_pro_generate()), mimetype='text/event-stream',
                        headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
     
     # ═══ TURBO: оркестратор + pipeline как раньше ═══
+    _saved_user_id = request.user_id  # PATCH: save before generator loses request context
     def generate():
         nonlocal routed_model_name, model_name, agent_model_name
         full_response = ""
@@ -1611,7 +1628,7 @@ def send_message(chat_id):
                 "status": "running",
                 "events": [],
                 "started_at": time.time(),
-                "user_id": request.user_id,
+                "user_id": _saved_user_id,
                 "message": user_message[:100],
             }
 
@@ -1681,7 +1698,7 @@ def send_message(chat_id):
                 api_key=OPENROUTER_API_KEY,
                 api_url=OPENROUTER_BASE_URL,
                 ssh_credentials={},  # No SSH needed for file generation
-                user_id=request.user_id  # BUG-5 FIX
+                user_id=_saved_user_id  # BUG-5 FIX
             )
             agent._chat_id = chat_id  # BUG-5 FIX
             agent._verify_enabled = data.get("verify", False)  # ПАТЧ 7
@@ -1714,7 +1731,7 @@ def send_message(chat_id):
 
             # ── Project Memory: load context from previous sessions ──
             try:
-                pm = ProjectMemory(user_id=request.user_id, project_id=chat_id)
+                pm = ProjectMemory(user_id=_saved_user_id, project_id=chat_id)
                 pm.start_session(chat_id, task=user_message[:200])
                 memory_context = pm.get_full_context(chat_id)
                 if memory_context:
@@ -1787,7 +1804,7 @@ def send_message(chat_id):
                     api_key=OPENROUTER_API_KEY,
                     api_url=OPENROUTER_BASE_URL,
                     ssh_credentials=ssh_credentials,
-                    user_id=request.user_id,  # BUG-5 FIX
+                    user_id=_saved_user_id,  # BUG-5 FIX
                     model_override=_sm_model_override,
                     system_prompt_override=_sm_extra_prompt
                 )
@@ -1918,7 +1935,7 @@ def send_message(chat_id):
                 _mem_v9 = SuperMemoryEngine(call_llm_func=_mem_call_llm)
                 _mem_v9.init_task(
                     user_message=user_message,
-                    user_id=request.user_id,
+                    user_id=_saved_user_id,
                     chat_id=chat_id,
                     api_key=OPENROUTER_API_KEY,
                     api_url=OPENROUTER_BASE_URL
@@ -1934,9 +1951,9 @@ def send_message(chat_id):
                     _enriched_prompt = _mem_context[0]["content"]
                     if _enriched_prompt != system_prompt:
                         system_prompt = _enriched_prompt
-                        _mem_log.info(f"[MEMORY] CHAT MODE READ OK: +{len(_enriched_prompt)-len(system_prompt)} chars injected, user={request.user_id!r}")
+                        _mem_log.info(f"[MEMORY] CHAT MODE READ OK: +{len(_enriched_prompt)-len(system_prompt)} chars injected, user={_saved_user_id!r}")
                     else:
-                        _mem_log.info(f"[MEMORY] CHAT MODE READ: no facts yet for user={request.user_id!r}")
+                        _mem_log.info(f"[MEMORY] CHAT MODE READ: no facts yet for user={_saved_user_id!r}")
             except Exception as _mem_chat_err:
                 logging.getLogger("memory.engine").warning(f"[MEMORY] CHAT MODE memory read failed: {_mem_chat_err}", exc_info=True)
 
@@ -2119,7 +2136,7 @@ def send_message(chat_id):
         # Log cost via model_router for analytics
         try:
             log_cost(
-                user_id=request.user_id,
+                user_id=_saved_user_id,
                 model_id=routed_model_id,
                 tokens_in=tokens_in,
                 tokens_out=tokens_out,
@@ -2158,9 +2175,9 @@ def send_message(chat_id):
         db2["chats"][chat_id] = chat2
 
         # Update user spending
-        user2 = db2["users"].get(request.user_id, {})
+        user2 = db2["users"].get(_saved_user_id, {})
         user2["total_spent"] = round(user2.get("total_spent", 0) + total_cost, 4)
-        db2["users"][request.user_id] = user2
+        db2["users"][_saved_user_id] = user2
 
         # Update global analytics
         analytics = db2.get("analytics", {})
@@ -2190,7 +2207,7 @@ def send_message(chat_id):
             "enhanced": enhanced,
             "agent_mode": (is_agent_task and has_ssh) or is_lite_agent,
             "timestamp": now,
-            "user_id": request.user_id,
+            "user_id": _saved_user_id,
             "success": "❌" not in full_response[:100]
         })
         if len(memory["episodic"]) > 1000:
@@ -2204,7 +2221,7 @@ def send_message(chat_id):
                 user_message=user_message,
                 assistant_response=full_response[:500],
                 chat_id=chat_id,
-                user_id=request.user_id
+                user_id=_saved_user_id
             )
         except Exception as _nc_err:
             logging.warning(f"Non-critical error: {_nc_err}")
@@ -2224,7 +2241,7 @@ def send_message(chat_id):
                     success="❌" not in full_response[:100]
                 )
                 _agent_memory_saved = True
-                _mem_logger.info(f"[MEMORY] after_chat via agent.memory: OK, user={request.user_id!r}")
+                _mem_logger.info(f"[MEMORY] after_chat via agent.memory: OK, user={_saved_user_id!r}")
 
             # Для CHAT MODE (без агента) — сохраняем напрямую через memory_v9
             if not _agent_memory_saved and full_response:
@@ -2246,7 +2263,7 @@ def send_message(chat_id):
                     _mem_v9_save = SuperMemoryEngine(call_llm_func=_mem_call_llm_save)
                     _mem_v9_save.init_task(
                         user_message=user_message,
-                        user_id=request.user_id,
+                        user_id=_saved_user_id,
                         chat_id=chat_id,
                         api_key=OPENROUTER_API_KEY,
                         api_url=OPENROUTER_BASE_URL
@@ -2257,7 +2274,7 @@ def send_message(chat_id):
                         chat_id=chat_id,
                         success="❌" not in full_response[:100]
                     )
-                    _mem_logger.info(f"[MEMORY] after_chat SAVE OK: user={request.user_id!r}, msg={user_message[:60]!r}")
+                    _mem_logger.info(f"[MEMORY] after_chat SAVE OK: user={_saved_user_id!r}, msg={user_message[:60]!r}")
                 except Exception as _direct_err:
                     _mem_logger.warning(f"[MEMORY] direct memory_v9 after_chat failed: {_direct_err}", exc_info=True)
         except Exception as _ac_err:

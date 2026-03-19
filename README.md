@@ -1,153 +1,57 @@
-# ORION Digital — Autonomous AI IT-Studio
+# ORION Digital - AI Agent Platform
 
-**ORION** is an autonomous multi-agent AI system that independently executes web development tasks: server management, CMS administration, browser automation, and full-stack development.
+ORION — это автономная платформа на базе ИИ, способная выполнять сложные задачи: от написания кода до полного деплоя сайтов на удалённые серверы через SSH.
 
-**Live Demo:** [orion.mksitdev.ru](https://orion.mksitdev.ru)
+## 🚀 Архитектура
 
----
+Платформа состоит из двух основных компонентов:
 
-## Architecture
+1. **Frontend (Vanilla JS + HTML/CSS)**
+   - Адаптивный интерфейс в стиле ChatGPT
+   - Поддержка Markdown, подсветки синтаксиса (Prism.js)
+   - Рендеринг артефактов (HTML/CSS/JS) прямо в браузере через iframe
+   - Устойчивая система кэширования чатов (защита от потери данных при рестартах API)
 
-```
-┌──────────────────────────────────────────────────┐
-│                   Frontend                        │
-│          HTML + CSS + Vanilla JS                  │
-│          SSE streaming, Activity Panel            │
-├──────────────────────────────────────────────────┤
-│                   Backend                         │
-│          Flask + Gunicorn (Python 3.12)           │
-│          Agent Loop + Orchestrator v2             │
-├──────────────────────────────────────────────────┤
-│                 AI Models                         │
-│    DeepSeek V3 · Claude Sonnet · Claude Opus      │
-│    Gemini Pro · GPT-4.1                           │
-├──────────────────────────────────────────────────┤
-│                Capabilities                       │
-│    SSH/FTP · Browser Automation (Playwright)      │
-│    Code Generation · Image Generation             │
-│    Bitrix/WordPress CMS · SEO · Copywriting       │
-└──────────────────────────────────────────────────┘
-```
+2. **Backend (Python + Flask + Gunicorn)**
+   - **AgentLoop (`agent_loop.py`)**: Ядро автономного агента. Поддерживает вызов инструментов (Tool Calling), работу с памятью, SSH-подключения и деплой.
+   - **Orchestrator (`orchestrator_v2.py`)**: Планировщик задач. Разбивает сложные запросы на фазы и управляет их выполнением.
+   - **App (`app.py`)**: REST API для фронтенда, управление сессиями, биллинг и маршрутизация запросов.
 
-## Dual Prompt Architecture (BUG-11)
+## 🛠️ Последние критические исправления (Аудит)
 
-ORION uses a **dual prompt system** that adapts to model capabilities:
+В ходе последнего аудита были выявлены и устранены следующие критические баги, которые мешали агенту выполнять сложные задачи (например, деплой сайта "Северный ветер"):
 
-| Mode | Model | System Prompt | Context Window |
-|------|-------|---------------|----------------|
-| Turbo Standard | DeepSeek V3 | Full (50+ rules) | 10 messages |
-| Turbo Premium | DeepSeek V3 | Full (50+ rules) | 10 messages |
-| Pro Standard | Claude Sonnet | Minimal (20 lines) | 50 messages |
-| Pro Premium | Claude Sonnet | Minimal (20 lines) | 50 messages |
-| Architect | Claude Opus | Minimal (20 lines) | 50 messages |
+### 1. Зависание LLM Stream (AgentLoop)
+- **Проблема:** Агент зависал навсегда при чтении ответов от OpenRouter API, если соединение закрывалось некорректно (CLOSE-WAIT).
+- **Решение:** Внедрён `threading.Timer` (180 сек) для принудительного закрытия `resp.close()` и обработки таймаутов в `_call_ai_stream`.
 
-**Philosophy:** Trust smart models. Sonnet and Opus already know how to work with nginx, Docker, Bitrix, etc. They don't need 50 rules teaching them. DeepSeek, being weaker, still benefits from detailed instructions.
+### 2. Ошибки контекста Flask (App)
+- **Проблема:** `RuntimeError: Working outside of request context` при сохранении стоимости запроса в фоновом потоке генерации.
+- **Решение:** Идентификатор пользователя (`request.user_id`) теперь сохраняется в локальную переменную до запуска генератора.
 
-## Key Features
+### 3. Отсутствующие функции подсчёта стоимости (App)
+- **Проблема:** `NameError: name '_now_iso' is not defined` и `_calc_cost` при завершении задач в Pro-режиме.
+- **Решение:** Добавлены глобальные хелперы `_now_iso()` и `_calc_cost()` для корректного биллинга.
 
-- **Multi-Agent System** — Orchestrator assigns tasks to specialized agents (developer, designer, devops, tester, copywriter)
-- **Browser Automation** — Full Playwright integration: click, fill, submit, select, screenshot, login detection
-- **FTP Tools** — Direct file upload/download via `ftplib` (no SSH required)
-- **SSH Execution** — Remote command execution with auto-backup before destructive operations
-- **Anti-Loop Detection** — Detects 3 identical tool calls in a row; Pro mode warns the model, Turbo mode escalates to Sonnet
-- **Memory System** — v9 memory engine with semantic search, working memory, and aggressive context compression
-- **Solution Cache** — Learns from successful solutions and reuses patterns
-- **Cross-Learning** — Shares knowledge between agents via error patterns database
-- **Auth Flow** — Secure browser login: agent detects login forms, asks user for credentials via UI
-- **Task Planning** — Generates execution plan before starting, shows progress in Activity Panel
-- **Chain of Thought** — Pro/Architect modes think and plan before acting (visible in Activity Panel)
-- **File Logging** — All backend activity logged to `/var/log/orion-backend.log`
+### 4. Блокировка SSH-задач (AgentLoop)
+- **Проблема:** Запросы со словом "визитка" ошибочно триггерили `ArtifactGenerator` (генерацию картинок) вместо полноценного AgentLoop с SSH.
+- **Решение:** Обновлена логика `_check_force_tool` — запросы, содержащие SSH-доступы или команды деплоя, теперь всегда направляются в AgentLoop.
 
-## Project Structure
+### 5. Исчезновение чатов на фронтенде (Frontend)
+- **Проблема:** При протухании токена (401 Unauthorized) или рестарте бэкенда список чатов очищался.
+- **Решение:** Внедрено агрессивное кэширование в `localStorage`. Чаты сохраняются перед любым API-запросом и мгновенно восстанавливаются при ошибках или перелогине.
 
-```
-orion/
-├── backend/
-│   ├── app.py                  # Flask API, routing, auth
-│   ├── agent_loop.py           # Agent loop, tools, prompts (TOOLS_SCHEMA)
-│   ├── orchestrator_v2.py      # Task planner, model selection, agent prompts
-│   ├── parallel_agents.py      # Parallel/sequential agent execution
-│   ├── browser_agent.py        # Playwright browser automation + FTP
-│   ├── specialized_agents.py   # Agent definitions and pipelines
-│   ├── solution_cache.py       # Successful solution caching
-│   ├── ssh_executor.py         # SSH/SFTP execution
-│   ├── model_router.py         # LLM model routing
-│   ├── database.py             # SQLite database operations
-│   ├── memory_v9/              # Memory engine
-│   │   ├── config.py
-│   │   ├── engine.py
-│   │   ├── working.py
-│   │   └── semantic.py
-│   └── data/
-│       └── knowledge_base/     # Hosting guides, DNS configs
-├── frontend/
-│   ├── app.js                  # SPA frontend
-│   └── index.html              # Entry point
-├── docs/
-│   └── BUG-11-report.md        # Architecture change report
-├── robots.txt                  # Allow all crawlers
-└── README.md
-```
+### 6. Ошибка парсинга фаз (Orchestrator)
+- **Проблема:** `IndexError: list index out of range`, когда LLM возвращала пустой массив фаз.
+- **Решение:** Добавлена проверка `if phases:` перед доступом к `phases[0]`.
 
-## Modes
+## 🌐 Инфраструктура
 
-### Turbo (DeepSeek V3)
-Best for simple tasks. Cheap and fast. Uses detailed prompts with 50+ rules to guide the model.
+- **Сервер:** Ubuntu 22.04
+- **Веб-сервер:** Nginx (Reverse Proxy) + Gunicorn
+- **База данных:** SQLite (`database.sqlite`) / JSON fallback
+- **LLM Провайдер:** OpenRouter (DeepSeek, Claude, OpenAI)
 
-### Pro (Claude Sonnet)
-Best for complex tasks. Minimal prompt — the model decides how to approach the task. 5x larger context window. Chain of thought planning.
-
-### Architect (Claude Opus)
-Best for system design and architecture. Uses the most capable model with full autonomy.
-
-## Quick Start
-
-```bash
-# Clone
-git clone https://github.com/mksmediengruppe-netizen/orion.git
-cd orion
-
-# Setup
-cd backend
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-
-# Configure
-cp .env.example .env
-# Edit .env with your API keys
-
-# Run
-gunicorn --worker-class gthread --workers 1 --threads 8 --bind 0.0.0.0:3510 app:app
-```
-
-## Environment Variables
-
-| Variable | Description |
-|----------|-------------|
-| `OPENROUTER_API_KEY` | OpenRouter API key for model access |
-| `DATA_DIR` | Data directory path (default: `./data`) |
-| `PLAYWRIGHT_BROWSERS_PATH` | Playwright browser path |
-
-## API Endpoints
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/login` | POST | User authentication |
-| `/api/chats` | GET | List user chats |
-| `/api/chats/<id>/send` | POST | Send message (SSE stream) |
-| `/api/chats/<id>/send_v2` | POST | Send message v2 (SSE stream) |
-| `/api/estimate` | POST | Project cost estimation |
-| `/api/admin/stats` | GET | Admin statistics |
-
-## License
-
-Proprietary. MKS Mediengruppe / Netizen.
-
-## Changelog
-
-- **v6.1** (2026-03-18) — Dual prompt architecture, anti-loop detection, file logging
-- **v6.0** (2026-03-17) — Creative Suite, Web Search, Memory & Projects, Canvas, Multi-Model Routing
-- **v5.0** — Browser Automation, FTP Tools, Professional Prompts
-- **v4.0** — Multi-Agent Orchestrator, Parallel Execution
-- **v3.0** — Memory v9, Solution Cache, Cross-Learning
+## 🔒 Безопасность
+- Пароли и API-ключи хранятся в `.env`
+- SSH-доступы, передаваемые пользователем, используются только в рамках текущей сессии агента и не сохраняются в открытом виде.
