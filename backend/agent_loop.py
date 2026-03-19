@@ -1734,7 +1734,7 @@ class AgentLoop:
     def _execute_tool(self, tool_name, arguments):
         """Execute a tool with retry and idempotency."""
         try:
-            args = json.loads(arguments) if isinstance(arguments, str) else arguments
+            args = json.loads(arguments) if isinstance(arguments, str) and arguments.strip() else (arguments if isinstance(arguments, dict) else {})
         except json.JSONDecodeError:
             return {"success": False, "error": f"Invalid JSON arguments: {arguments}"}
 
@@ -1913,6 +1913,57 @@ class AgentLoop:
                     "is_login_form": detect_result.get("is_login_form", False)
                 }
 
+            # ── Новые browser инструменты v2 ──────────────────────────
+            elif tool_name == "browser_type":
+                selector = args.get("selector", "")
+                value = args.get("value", "")
+                clear = args.get("clear", True)
+                if isinstance(clear, str):
+                    clear = clear.lower() in ("true", "1", "yes")
+                return self.browser.type_text(selector, value, clear=clear)
+            elif tool_name == "browser_js":
+                code = args.get("code", "")
+                if not code:
+                    return {"success": False, "error": "code is required"}
+                return self.browser.execute_js(code)
+            elif tool_name == "browser_press_key":
+                key = args.get("key", "Enter")
+                return self.browser.press_key(key)
+            elif tool_name == "browser_scroll":
+                direction = args.get("direction", "down")
+                amount = int(args.get("amount", 500))
+                return self.browser.scroll(direction, amount)
+            elif tool_name == "browser_hover":
+                selector = args.get("selector", "")
+                if not selector:
+                    return {"success": False, "error": "selector is required"}
+                return self.browser.hover(selector)
+            elif tool_name == "browser_wait":
+                selector = args.get("selector")
+                url_contains = args.get("url_contains")
+                timeout = int(args.get("timeout", 15000))
+                return self.browser.wait_for(selector=selector, url_contains=url_contains, timeout=timeout)
+            elif tool_name == "browser_elements":
+                selector = args.get("selector", "*")
+                limit = int(args.get("limit", 50))
+                return self.browser.get_elements(selector, limit)
+            elif tool_name == "browser_screenshot":
+                return self.browser.screenshot()
+            elif tool_name == "browser_page_info":
+                return self.browser.get_page_info()
+            elif tool_name == "smart_login":
+                url = args.get("url", "")
+                login = args.get("login", "")
+                password = args.get("password", "")
+                if not url or not login or not password:
+                    return {"success": False, "error": "url, login, and password are required"}
+                return self.browser.smart_login(url, login, password)
+            elif tool_name == "browser_ask_user":
+                reason = args.get("reason", "custom")
+                instruction = args.get("instruction", "")
+                return self.browser.ask_user(reason, instruction)
+            elif tool_name == "browser_takeover_done":
+                return self.browser.takeover_done()
             # ── ЗАДАЧА-1: FTP инструменты ────────────────────────────────────────
 
             elif tool_name == "ftp_upload":
@@ -3480,6 +3531,46 @@ ReactDOM.createRoot(document.getElementById('root')).render(<App />);
             hint = result.get("hint", "")
             return f"🔐 Форма авторизации обнаружена ({len(fields)} полей) {hint}"
 
+        elif tool_name == "browser_type":
+            selector = result.get("selector", "")
+            chars = result.get("chars_typed", 0)
+            return f"⌨️ Ввод в '{selector}' ({chars} символов)"
+        elif tool_name == "browser_js":
+            ret = str(result.get("return_value", ""))[:100]
+            return f"🔧 JS выполнен: {ret}"
+        elif tool_name == "browser_press_key":
+            key = result.get("key", "")
+            return f"⌨️ Нажата клавиша: {key}"
+        elif tool_name == "browser_scroll":
+            direction = result.get("direction", "")
+            return f"📜 Прокрутка: {direction}"
+        elif tool_name == "browser_hover":
+            selector = result.get("selector", "")
+            return f"🖱️ Наведение на '{selector}'"
+        elif tool_name == "browser_wait":
+            waited = result.get("waited_ms", 0)
+            return f"⏳ Ожидание: {waited}ms"
+        elif tool_name == "browser_elements":
+            count = result.get("count", 0)
+            return f"📋 Найдено {count} элементов"
+        elif tool_name == "browser_screenshot":
+            url = result.get("url", "")
+            has_img = "📸" if result.get("screenshot") else "❌"
+            return f"{has_img} Скриншот: {url}"
+        elif tool_name == "browser_page_info":
+            title = result.get("title", "")
+            url = result.get("url", "")
+            return f"📄 Страница: {title} | {url}"
+        elif tool_name == "smart_login":
+            logged = result.get("logged_in", False)
+            url = result.get("url_after", "")
+            status = "✅ Вход выполнен" if logged else "❌ Вход не удался"
+            return f"🔐 {status} | {url}"
+        elif tool_name == "browser_ask_user":
+            reason = result.get("reason", "")
+            return f"👤 Запрос пользователю: {reason}"
+        elif tool_name == "browser_takeover_done":
+            return "✅ Управление возвращено агенту"
         elif tool_name == "ftp_upload":
             path = result.get("remote_path", "")
             size = result.get("size_bytes", 0)
@@ -4536,31 +4627,6 @@ class MultiAgentLoop(AgentLoop):
             _current_orion_mode = getattr(self, 'orion_mode', getattr(self, '_orion_mode', 'turbo_standard'))
             if _current_orion_mode in PRO_MODES:
                 _plog.info(f"[Pipeline] Pro/Architect mode: keeping model {self.model} (no switch)")
-            elif tool_name == "browser_type":
-                return self.browser.type_text(args.get("selector",""), args.get("value",""), clear=args.get("clear",True))
-            elif tool_name == "browser_js":
-                return self.browser.execute_js(args.get("code",""))
-            elif tool_name == "browser_press_key":
-                return self.browser.press_key(args.get("key","Enter"))
-            elif tool_name == "browser_scroll":
-                return self.browser.scroll(args.get("direction","down"), int(args.get("amount",500)))
-            elif tool_name == "browser_hover":
-                return self.browser.hover(args.get("selector",""))
-            elif tool_name == "browser_wait":
-                return self.browser.wait_for(selector=args.get("selector"), url_contains=args.get("url_contains"), timeout=int(args.get("timeout",15000)))
-            elif tool_name == "browser_elements":
-                return self.browser.get_elements(args.get("selector","*"), int(args.get("limit",50)))
-            elif tool_name == "browser_screenshot":
-                return self.browser.screenshot()
-            elif tool_name == "browser_page_info":
-                return self.browser.get_page_info()
-            elif tool_name == "smart_login":
-                return self.browser.smart_login(args.get("url",""), args.get("login",""), args.get("password",""))
-            elif tool_name == "browser_ask_user":
-                return self.browser.ask_user(args.get("reason","custom"), args.get("instruction",""))
-            elif tool_name == "browser_takeover_done":
-                return self.browser.takeover_done()
-
             else:
                 try:
                     from orchestrator_v2 import get_model_for_agent
