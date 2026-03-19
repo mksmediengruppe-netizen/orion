@@ -1,0 +1,16 @@
+   5040 /var/www/html/audit/agent_loop.py.txt
+   4058 /var/www/html/audit/app.js.txt
+   4437 /var/www/html/audit/app.py.txt
+   1294 /var/www/html/audit/browser_agent.py.txt
+    517 /var/www/html/audit/index.html.txt
+    102 /var/www/html/audit/memory_config.py.txt
+    613 /var/www/html/audit/memory_engine.py.txt
+    241 /var/www/html/audit/memory_working.py.txt
+    514 /var/www/html/audit/model_router.py.txt
+    583 /var/www/html/audit/orchestrator_v2.py.txt
+    686 /var/www/html/audit/parallel_agents.py.txt
+    369 /var/www/html/audit/solution_cache.py.txt
+    496 /var/www/html/audit/specialized_agents.py.txt
+    273 /var/www/html/audit/ssh_executor.py.txt
+   3783 /var/www/html/audit/style.css.txt
+  23006 total

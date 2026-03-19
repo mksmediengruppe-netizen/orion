@@ -1,6 +1,6 @@
 {
   "user_id": "admin",
-  "chat_count": 388,
+  "chat_count": 400,
   "facts": [
     "Пользователя зовут Тестер5",
     "Работает с Elixir и Phoenix",
@@ -111,7 +111,10 @@
     "server_ip": "45.67.57.175",
     "тематика изображений": "москва, утро, рассвет",
     "hosting_panel": "cp.beget.com",
-    "dns_tool": "dig"
+    "dns_tool": "dig",
+    "hosting": "Beget",
+    "login": "asmksm58",
+    "желает": "сделать красивый сайт с разделами: hero, услуги, цены и контакты"
   },
   "expertise_level": "unknown"
 }

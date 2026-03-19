@@ -4095,7 +4095,6 @@ ReactDOM.createRoot(document.getElementById('root')).render(<App />);
                         "summary": summary
                     })
                     yield self._sse({"type": "task_complete", "summary": summary})
-                    yield self._sse({"type": "usage", "prompt_tokens": self.total_tokens_in, "completion_tokens": self.total_tokens_out})
 
                     # ── ПАТЧ 6: Автопроверка после task_complete ──
                     try:
@@ -4401,7 +4400,6 @@ ReactDOM.createRoot(document.getElementById('root')).render(<App />);
                     self.memory.on_stop(user_message, iteration)
                 except Exception as _os_err:
                     logger.debug(f"memory.on_stop error: {_os_err}")
-            yield self._sse({"type": "usage", "prompt_tokens": self.total_tokens_in, "completion_tokens": self.total_tokens_out})
             yield self._sse({"type": "stopped", "text": "Агент остановлен пользователем"})
             return
 
@@ -4503,8 +4501,6 @@ ReactDOM.createRoot(document.getElementById('root')).render(<App />);
                         break
             except Exception as e:
                 yield self._sse({"type": "content", "text": f"\n\n⚠️ Агент достиг лимита итераций ({self.MAX_ITERATIONS}). Пожалуйста, уточните задачу или повторите запрос."})
-        # ── USAGE: отправляем токены обратно в app.py ──
-        yield self._sse({"type": "usage", "prompt_tokens": self.total_tokens_in, "completion_tokens": self.total_tokens_out})
 
 
 # ══════════════════════════════════════════════════════════════
