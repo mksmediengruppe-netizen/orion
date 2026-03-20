@@ -5520,29 +5520,53 @@ class MultiAgentLoop(AgentLoop):
                         try:
                             # Set viewport size
                             self._execute_tool('browser_navigate', {'url': f"http://{_qc_host}"})
-                            import time; time.sleep(2)
+                            import time; time.sleep(3)
                             _ss = self._execute_tool('browser_screenshot', {})
                             _ss_b64 = _ss.get('screenshot', '')
-                            if not _ss_b64:
-                                continue
-                            if 'base64,' in _ss_b64:
+                            if 'base64,' in (_ss_b64 or ''):
                                 _ss_b64 = _ss_b64.split('base64,')[1]
                             
-                            # Opus reviews
+                            # Opus reviews — with or without screenshot
                             import requests as _pqc_req
                             _pqc_headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
+                            _awwwards_prompt = (
+                                f"You are an Awwwards judge reviewing a website design ({_vp['name']} view).\n"
+                                "Rate on a scale 1-10 with EXTREME strictness.\n"
+                                "A score of 9+ means: wow-effect, micro-animations, premium shadows/gradients, "
+                                "perfect typography, glassmorphism or bold modern aesthetic, pixel-perfect spacing, "
+                                "compelling hero section with strong CTA, professional color palette.\n"
+                                "Score 7-8 = good but lacks wow-effect or micro-animations.\n"
+                                "Score < 7 = generic template look, no premium feel.\n"
+                                "If score < 9, describe EXACTLY what specific CSS/HTML changes would push it to 9+.\n"
+                                "Format: SCORE: X/10\nISSUES: ...\nFIX: ..."
+                            )
+                            if _ss_b64:
+                                _pqc_content = [
+                                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{_ss_b64}"}},
+                                    {"type": "text", "text": _awwwards_prompt}
+                                ]
+                            else:
+                                # Fallback: review HTML code without screenshot
+                                _pqc_log.warning(f"[PremiumQC] No screenshot for {_vp['name']}, reviewing HTML code")
+                                yield self._sse({"type": "content", "text": f"  ⚠️ Скриншот недоступен, Opus проверяет HTML-код...\n", "agent": "Premium QC"})
+                                _html_for_review = (_pqc_html_content or '')[:15000]
+                                if not _html_for_review:
+                                    continue
+                                _pqc_content = [{"type": "text", "text": (
+                                    f"Review this HTML/CSS code for a website ({_vp['name']} view) as an Awwwards judge.\n"
+                                    "Rate on a scale 1-10 with EXTREME strictness.\n"
+                                    "A score of 9+ means: wow-effect, micro-animations (CSS keyframes), premium shadows/gradients, "
+                                    "glassmorphism or bold modern aesthetic, perfect typography (Google Fonts), "
+                                    "compelling hero section, professional color palette, scroll animations.\n"
+                                    "Score 7-8 = good but lacks wow-effect or micro-animations.\n"
+                                    "Score < 7 = generic template look, no premium feel.\n"
+                                    "If score < 9, describe EXACTLY what CSS/HTML changes would push it to 9+.\n"
+                                    "Format: SCORE: X/10\nISSUES: ...\nFIX: ...\n\n"
+                                    f"HTML CODE:\n{_html_for_review}"
+                                )}]
                             _pqc_review = _pqc_req.post(self.api_url, headers=_pqc_headers, json={
                                 "model": _pqc_opus_model,
-                                "messages": [{"role": "user", "content": [
-                                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{_ss_b64}"}},
-                                    {"type": "text", "text": (
-                                        f"Rate this website design ({_vp['name']} view) on a scale 1-10. "
-                                        "Be critical. Check: visual hierarchy, typography, spacing, colors, "
-                                        "responsiveness, modern feel (gradients, shadows, animations). "
-                                        "If score < 9, describe EXACTLY what to fix. "
-                                        "Format: SCORE: X/10\nISSUES: ...\nFIX: ..."
-                                    )}
-                                ]}],
+                                "messages": [{"role": "user", "content": _pqc_content}],
                                 "temperature": 0.3,
                                 "max_tokens": 2000,
                                 "stream": False,
@@ -5646,27 +5670,50 @@ class MultiAgentLoop(AgentLoop):
                         break
 
                     if not _screenshot_b64:
-                        _qc_log.warning("[QualityCheck] No screenshot obtained, skipping quality check")
-                        break
+                        _qc_log.warning("[QualityCheck] No screenshot obtained, attempting HTML-only review")
+                        if _qc_html_content:
+                            yield self._sse({"type": "content", "text": "⚠️ Скриншот недоступен, проверяю HTML-код...\n", "agent": "Quality Check"})
+                            # Fall through to review with HTML content only (no image)
+                            _screenshot_b64 = None
+                        else:
+                            _qc_log.warning("[QualityCheck] No screenshot and no HTML content, skipping")
+                            break
 
                     # Step 2: Send screenshot to MiniMax for design review
                     yield self._sse({"type": "content", "text": "🧠 MiniMax проверяет дизайн...\n", "agent": "Quality Check"})
-                    _b64_clean = _screenshot_b64
+                    _b64_clean = _screenshot_b64 or ''
                     if 'base64,' in _b64_clean:
                         _b64_clean = _b64_clean.split('base64,')[1]
 
-                    _review_messages = [
-                        {"role": "user", "content": [
+                    _qc_awwwards_text = (
+                        "Ты — судья Awwwards. Оцени этот сайт строго.\n"
+                        "Критерии для оценки 9+/10: wow-эффект, микроанимации, премиальные тени/градиенты, "
+                        "glassmorphism или смелая современная эстетика, идеальная типографика, "
+                        "compelling hero-секция, профессиональная цветовая палитра.\n"
+                        "Если нет wow-эффекта, микроанимаций, премиальных теней — оценка < 8.\n"
+                        "Если дизайн выглядит как обычный шаблон — напиши ИСПРАВИТЬ и опиши конкретно что добавить.\n"
+                        "Если дизайн действительно на уровне Awwwards (9+/10) — напиши ХОРОШО.\n"
+                        "Отвечай кратко: ХОРОШО или ИСПРАВИТЬ + что именно."
+                    )
+                    if _b64_clean:
+                        _review_content = [
                             {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{_b64_clean}"}},
-                            {"type": "text", "text": (
-                                "Посмотри на этот скриншот сайта. "
-                                "CSS работает? Дизайн выглядит правильно? "
-                                "Если нет — опиши конкретно что не так и напиши ИСПРАВИТЬ. "
-                                "Если всё хорошо — напиши ХОРОШО. "
-                                "Отвечай кратко."
-                            )}
-                        ]}
-                    ]
+                            {"type": "text", "text": _qc_awwwards_text}
+                        ]
+                    else:
+                        # No screenshot — review HTML code
+                        _html_snippet = (_qc_html_content or '')[:10000]
+                        _review_content = [{"type": "text", "text": (
+                            "Ты — судья Awwwards. Оцени этот HTML/CSS код строго.\n"
+                            "Критерии для оценки 9+/10: wow-эффект, микроанимации (CSS keyframes/transitions), "
+                            "премиальные тени/градиенты, glassmorphism или смелая современная эстетика, "
+                            "идеальная типографика (Google Fonts), compelling hero-секция.\n"
+                            "Если нет wow-эффекта, микроанимаций, премиальных теней — напиши ИСПРАВИТЬ.\n"
+                            "Если дизайн действительно на уровне Awwwards — напиши ХОРОШО.\n"
+                            "Отвечай кратко: ХОРОШО или ИСПРАВИТЬ + что именно.\n\n"
+                            f"HTML CODE:\n{_html_snippet}"
+                        )}]
+                    _review_messages = [{"role": "user", "content": _review_content}]
 
                     try:
                         _review_headers = {
@@ -5996,6 +6043,41 @@ class MultiAgentLoop(AgentLoop):
                 except Exception as _tw_e:
                     _tw_log.warning(f"[TailwindCheck] Error: {_tw_e}")
             # ── END TAILWIND CDN CHECK ──────────────────────────────────────
+            # ── AOS & LUCIDE JS CHECK (PATCH-30) ──────────────────────────
+            if _is_deploy_phase and _qc_host:
+                import logging as _aos_log
+                try:
+                    _aos_result = self._execute_tool('ssh_execute', {
+                        'host': _qc_host,
+                        'username': self.ssh_credentials.get('username', 'root'),
+                        'password': self.ssh_credentials.get('password', ''),
+                        'command': (
+                            "for f in /var/www/html/index.html /var/www/*/index.html; do "
+                            "  [ -f '$f' ] || continue; "
+                            "  HAS_AOS_ATTR=$(grep -c 'data-aos' '$f' 2>/dev/null || echo 0); "
+                            "  HAS_AOS_JS=$(grep -c 'aos.js' '$f' 2>/dev/null || echo 0); "
+                            "  FIXED=0; "
+                            "  if [ '$HAS_AOS_ATTR' -gt 0 ] && [ '$HAS_AOS_JS' -eq 0 ]; then "
+                            "    perl -i -pe 's|</body>|<script src=https://unpkg.com/aos@2.3.1/dist/aos.js></script><script>AOS.init();</script></body>|' '$f'; "
+                            "    FIXED=$((FIXED+1)); echo 'AOS_JS_ADDED:'$f; "
+                            "  fi; "
+                            "  HAS_AOS_CSS=$(grep -c 'aos.css' '$f' 2>/dev/null || echo 0); "
+                            "  if [ '$HAS_AOS_ATTR' -gt 0 ] && [ '$HAS_AOS_CSS' -eq 0 ]; then "
+                            "    perl -i -pe 's|</head>|<link href=https://unpkg.com/aos@2.3.1/dist/aos.css rel=stylesheet></head>|' '$f'; "
+                            "    FIXED=$((FIXED+1)); echo 'AOS_CSS_ADDED:'$f; "
+                            "  fi; "
+                            "  if [ '$FIXED' -eq 0 ] && [ '$HAS_AOS_ATTR' -gt 0 ]; then echo 'AOS_OK:'$f; fi; "
+                            "done"
+                        )
+                    })
+                    _aos_output = _aos_result.get('output', '') if _aos_result.get('success') else ''
+                    if 'AOS_JS_ADDED' in _aos_output or 'AOS_CSS_ADDED' in _aos_output or 'AOS_INIT_ADDED' in _aos_output:
+                        yield self._sse({"type": "content", "text": "⚠️ AOS библиотека не была подключена — исправлено автоматически\n", "agent": "AOS Check"})
+                    elif 'AOS_OK' in _aos_output:
+                        yield self._sse({"type": "content", "text": "✅ AOS анимации подключены корректно\n", "agent": "AOS Check"})
+                except Exception as _aos_e:
+                    _aos_log.warning(f"[AOSCheck] Error: {_aos_e}")
+            # ── END AOS & LUCIDE JS CHECK ──────────────────────────────────
 
 
 
