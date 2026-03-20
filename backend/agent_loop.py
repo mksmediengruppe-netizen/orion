@@ -1182,6 +1182,10 @@ ftp_list, store_memory, recall_memory, update_scratchpad, task_complete.
 4. Если способ не работает — попробуй другой. Минимум 3 попытки.
 5. Проверь результат: открой сайт, сделай скриншот, убедись.
 6. Для фото на сайтах — генерируй через generate_image.
+   ВАЖНО: после деплоя проверь что ВСЕ изображения доступны на сервере.
+   Если в HTML есть src="images/photo.jpg" — файл ДОЛЖЕН существовать на сервере.
+   Проверь: ssh_execute('ls -la /var/www/*/images/ 2>/dev/null')
+   Если файлов нет — сгенерируй и загрузи через wget на сервер.
 7. Завершай только когда ВСЁ сделано. Не пропускай шаги.
 8. НЕ ПЕРЕДЕЛЫВАЙ рабочий результат. Сначала выполни ВСЕ пункты ТЗ (DNS, SSL, фото, скриншоты), потом улучшай если остались итерации.
 
@@ -1223,6 +1227,13 @@ ftp_list, store_memory, recall_memory, update_scratchpad, task_complete.
    (используй curl/wget чтобы скачать с ORION на целевой сервер)
 4. Замени placeholder на реальные пути к фото
 5. Если generate_image не сработал — оставь placeholder, не ломай сайт
+6. КРИТИЧЕСКИ ВАЖНО: после загрузки ВСЕХ фото проверь что КАЖДЫЙ файл существует на сервере:
+   ssh_execute('ls -la /var/www/*/images/ 2>/dev/null')
+   Если какой-то файл отсутствует — сгенерируй заново и загрузи!
+7. ОБЯЗАТЕЛЬНО: проверь сайт через browser_navigate(http://IP/) и убедись что:
+   - Страница открывается (не 301/302/404/500)
+   - Все изображения видны (не broken images)
+   - Если есть проблемы — исправь nginx конфиг
 
 После деплоя:
 1. Проверь DNS: ssh_execute('dig +short домен'). 
@@ -5578,7 +5589,7 @@ class MultiAgentLoop(AgentLoop):
                                         'host': _qc_host,
                                         'username': self.ssh_credentials.get('username', 'root'),
                                         'password': self.ssh_credentials.get('password', ''),
-                                        'path': '/var/www/html/index.html',
+                                        'path': _ap_site_dir + '/index.html' if '_ap_site_dir' in dir() else '/var/www/html/index.html',
                                         'content': _fixed
                                     })
                                     _pqc_html_content = _fixed
@@ -5779,20 +5790,51 @@ class MultiAgentLoop(AgentLoop):
                 _ap_log.info("[AutoPhoto] Starting auto-photo check")
                 yield self._sse({"type": "content", "text": "\n🖼️ **Auto-Photo**: Проверяю изображения на сайте...\n", "agent": "Auto Photo"})
                 try:
-                    # Get HTML content from server
+                    # Get HTML content from server - search ALL /var/www/*/ directories
                     _ap_html_result = self._execute_tool('ssh_execute', {
                         'host': _qc_host,
                         'username': self.ssh_credentials.get('username', 'root'),
                         'password': self.ssh_credentials.get('password', ''),
-                        'command': 'cat /var/www/html/index.html 2>/dev/null || cat /var/www/*/index.html 2>/dev/null | head -500'
+                        'command': 'for f in /var/www/*/index.html; do [ -f "$f" ] && echo "===FILE:$f===" && cat "$f"; done 2>/dev/null'
                     })
-                    _ap_html = _ap_html_result.get('output', '') if _ap_html_result.get('success') else ''
+                    _ap_html_raw = _ap_html_result.get('output', '') if _ap_html_result.get('success') else ''
                     
-                    # Find all img src with placeholder or missing images
+                    # Determine which site directory has the HTML
+                    _ap_site_dir = '/var/www/html'
+                    if '===FILE:' in _ap_html_raw:
+                        import re as _ap_re2
+                        _ap_files = _ap_re2.findall(r'===FILE:(/var/www/[^/]+)/', _ap_html_raw)
+                        if _ap_files:
+                            _ap_site_dir = _ap_files[-1]  # Use last (most recent) site dir
+                    _ap_html = _ap_html_raw
+                    
+                    # Find ALL image references: <img src>, background-image:url(), background:url()
                     import re as _ap_re
-                    # Fixed: use compiled pattern to avoid quote escaping issues
-                    _ap_pattern = re.compile(r'<img[^>]+src=[\x22\x27]([^\x22\x27]*(?:placehold|placeholder|photo\d|image\d|hero|about|team|service)[^\x22\x27]*)[\x22\x27]', re.IGNORECASE)
-                    _placeholder_imgs = _ap_pattern.findall(_ap_html)
+                    _img_srcs = set()
+                    # 1. <img> tags
+                    _img_pattern = _ap_re.compile(r'<img[^>]+src=[\x22\x27]([^\x22\x27]+)[\x22\x27]', _ap_re.IGNORECASE)
+                    _img_srcs.update(_img_pattern.findall(_ap_html))
+                    # 2. background-image: url(...) and background: url(...)
+                    _bg_pattern = _ap_re.compile(r'(?:background(?:-image)?\s*:\s*[^;]*?)url\([\x22\x27]?([^\x22\x27\)]+)[\x22\x27]?\)', _ap_re.IGNORECASE)
+                    _img_srcs.update(_bg_pattern.findall(_ap_html))
+                    # 3. Filter: only local relative paths (not http/data/base64)
+                    _local_imgs = [s for s in _img_srcs if not s.startswith(('http', 'data:', 'blob:', '//'))]
+                    
+                    # Check which images actually exist on server (404 check)
+                    _missing_imgs = []
+                    if _local_imgs:
+                        _check_cmd = ' && '.join([f'[ -f "{_ap_site_dir}/{img}" ] || echo "MISSING:{img}"' for img in _local_imgs[:20]])
+                        _check_result = self._execute_tool('ssh_execute', {
+                            'host': _qc_host,
+                            'username': self.ssh_credentials.get('username', 'root'),
+                            'password': self.ssh_credentials.get('password', ''),
+                            'command': _check_cmd
+                        })
+                        _check_output = _check_result.get('output', '') if _check_result.get('success') else ''
+                        _missing_imgs = _ap_re.findall(r'MISSING:(.+)', _check_output)
+                    
+                    _placeholder_imgs = _missing_imgs if _missing_imgs else []
+                    _ap_log.info(f"[AutoPhoto] Found {len(_local_imgs)} image refs, {len(_missing_imgs)} missing")
                     
                     if _placeholder_imgs:
                         _ap_log.info(f"[AutoPhoto] Found {len(_placeholder_imgs)} placeholder images")
@@ -5843,8 +5885,25 @@ class MultiAgentLoop(AgentLoop):
                                     'height': 600
                                 })
                                 if _gen_result.get('success') and _gen_result.get('url'):
+                                    _img_url = _gen_result['url']
+                                    _img_dir = '/'.join(_img_src.split('/')[:-1]) if '/' in _img_src else 'images'
+                                    _upload_cmd = (
+                                        f'mkdir -p {_ap_site_dir}/{_img_dir} && '
+                                        f'wget -q -O {_ap_site_dir}/{_img_src} "{_img_url}" && '
+                                        f'echo "UPLOADED:{_img_src}"'
+                                    )
+                                    _upload_result = self._execute_tool('ssh_execute', {
+                                        'host': _qc_host,
+                                        'username': self.ssh_credentials.get('username', 'root'),
+                                        'password': self.ssh_credentials.get('password', ''),
+                                        'command': _upload_cmd
+                                    })
+                                    _upload_ok = 'UPLOADED:' in (_upload_result.get('output', '') if _upload_result.get('success') else '')
                                     _generated_count += 1
-                                    yield self._sse({"type": "content", "text": f"  ✅ Фото {_generated_count} сгенерировано\n", "agent": "Auto Photo"})
+                                    if _upload_ok:
+                                        yield self._sse({"type": "content", "text": f"  \u2705 Фото {_generated_count} загружено на сервер ({_img_src})\n", "agent": "Auto Photo"})
+                                    else:
+                                        yield self._sse({"type": "content", "text": f"  \u26a0\ufe0f Фото {_generated_count} сгенерировано, но не загружено\n", "agent": "Auto Photo"})
                             except Exception as _gen_e:
                                 _ap_log.warning(f"[AutoPhoto] generate_image failed: {_gen_e}")
                         
@@ -5855,6 +5914,61 @@ class MultiAgentLoop(AgentLoop):
                 except Exception as _ap_e:
                     _ap_log.warning(f"[AutoPhoto] Error: {_ap_e}")
             # ── END AUTO-PHOTO CHECK ──────────────────────────────────────────────
+            # ── EXTERNAL ACCESSIBILITY CHECK (PATCH-29): verify site is reachable from outside ──
+            if _is_deploy_phase and _qc_host:
+                import logging as _ext_log
+                _ext_log.info(f"[ExtCheck] Verifying external HTTP access to {_qc_host}")
+                yield self._sse({"type": "content", "text": "\n🌐 **External Check**: Проверяю доступность сайта извне...\n", "agent": "External Check"})
+                try:
+                    import requests as _ext_req
+                    _ext_url = f"http://{_qc_host}"
+                    _ext_resp = _ext_req.get(_ext_url, timeout=10, allow_redirects=False)
+                    _ext_status = _ext_resp.status_code
+                    if _ext_status == 200:
+                        yield self._sse({"type": "content", "text": f"  ✅ Сайт доступен: HTTP {_ext_status}\n", "agent": "External Check"})
+                    elif _ext_status in (301, 302):
+                        _ext_location = _ext_resp.headers.get('Location', '')
+                        yield self._sse({"type": "content", "text": f"  ⚠️ Редирект {_ext_status} → {_ext_location}\n", "agent": "External Check"})
+                        # Fix: if redirect to HTTPS but no valid SSL, remove the redirect
+                        if 'https' in _ext_location:
+                            yield self._sse({"type": "content", "text": f"  🔧 Обнаружен редирект на HTTPS — убираю...\n", "agent": "External Check"})
+                            self._execute_tool('ssh_execute', {
+                                'host': _qc_host,
+                                'username': self.ssh_credentials.get('username', 'root'),
+                                'password': self.ssh_credentials.get('password', ''),
+                                'command': (
+                                    'for f in /etc/nginx/sites-enabled/*; do '
+                                    'grep -l "return 301 https" "$f" 2>/dev/null && '
+                                    'sed -i "/return 301 https/d" "$f"; done && '
+                                    'nginx -t 2>&1 && nginx -s reload'
+                                )
+                            })
+                            # Re-check
+                            import time; time.sleep(2)
+                            _ext_resp2 = _ext_req.get(_ext_url, timeout=10, allow_redirects=False)
+                            if _ext_resp2.status_code == 200:
+                                yield self._sse({"type": "content", "text": f"  ✅ Исправлено! Сайт доступен: HTTP 200\n", "agent": "External Check"})
+                            else:
+                                yield self._sse({"type": "content", "text": f"  ❌ Всё ещё не 200: HTTP {_ext_resp2.status_code}\n", "agent": "External Check"})
+                    else:
+                        yield self._sse({"type": "content", "text": f"  ❌ Сайт недоступен: HTTP {_ext_status}\n", "agent": "External Check"})
+                    
+                    # Also check that images load (spot check first 3)
+                    if '_missing_imgs' not in dir():
+                        _missing_imgs = []
+                    if not _missing_imgs and '_local_imgs' in dir() and _local_imgs:
+                        _spot_check = _local_imgs[:3]
+                        for _sc_img in _spot_check:
+                            try:
+                                _sc_resp = _ext_req.head(f"{_ext_url}/{_sc_img}", timeout=5)
+                                if _sc_resp.status_code != 200:
+                                    yield self._sse({"type": "content", "text": f"  ⚠️ Изображение недоступно: {_sc_img} (HTTP {_sc_resp.status_code})\n", "agent": "External Check"})
+                            except Exception:
+                                pass
+                except Exception as _ext_e:
+                    _ext_log.warning(f"[ExtCheck] Error: {_ext_e}")
+                    yield self._sse({"type": "content", "text": f"  ⚠️ Не удалось проверить: {_ext_e}\n", "agent": "External Check"})
+            # ── END EXTERNAL ACCESSIBILITY CHECK ──────────────────────────────────
             # ── TAILWIND CDN CHECK (PATCH-15) ──────────────────────────────
             if _is_deploy_phase and _qc_host:
                 import logging as _tw_log
@@ -5863,7 +5977,7 @@ class MultiAgentLoop(AgentLoop):
                         'host': _qc_host,
                         'username': self.ssh_credentials.get('username', 'root'),
                         'password': self.ssh_credentials.get('password', ''),
-                        'command': 'grep -l "cdn.tailwindcss" /var/www/html/index.html /var/www/*/index.html 2>/dev/null || echo "NO_TAILWIND"'
+                        'command': 'grep -rl "cdn.tailwindcss" /var/www/*/index.html /var/www/html/index.html 2>/dev/null || echo "NO_TAILWIND"'
                     })
                     _tw_output = _tw_result.get('output', '') if _tw_result.get('success') else 'NO_TAILWIND'
                     if 'NO_TAILWIND' in _tw_output:
@@ -5874,7 +5988,7 @@ class MultiAgentLoop(AgentLoop):
                             'host': _qc_host,
                             'username': self.ssh_credentials.get('username', 'root'),
                             'password': self.ssh_credentials.get('password', ''),
-                            'command': 'sed -i \'s|</head>|<script src="https://cdn.tailwindcss.com"></script>\n</head>|\' /var/www/html/index.html 2>/dev/null'
+                            'command': 'for f in /var/www/*/index.html /var/www/html/index.html; do [ -f "$f" ] && sed -i \'s|</head>|<script src="https://cdn.tailwindcss.com"></script>\n</head>|\' "$f" 2>/dev/null; done'
                         })
                         yield self._sse({"type": "content", "text": "✅ Tailwind CDN добавлен\n", "agent": "Tailwind Check"})
                     else:
