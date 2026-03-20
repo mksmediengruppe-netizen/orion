@@ -4389,6 +4389,77 @@ ReactDOM.createRoot(document.getElementById('root')).render(<App />);
             assistant_msg["tool_calls"] = tool_calls_received
             messages.append(assistant_msg)
 
+            # ── ПАТЧ 10: Валидация JSON аргументов tool_call перед выполнением ──
+            # Streaming от OpenRouter может обрезать большие аргументы → невалидный JSON
+            # Если аргументы пустые или невалидный JSON — не выполнять, вернуть ошибку модели
+            _invalid_tool_calls = []
+            for _tc_check in tool_calls_received:
+                _tc_args_str = _tc_check["function"].get("arguments", "")
+                _tc_name = _tc_check["function"].get("name", "")
+                _is_valid = True
+                _parse_error = None
+                # Инструменты, которые требуют непустой контент
+                _content_tools = ("file_write", "ssh_execute", "browser_navigate",
+                                  "browser_input", "browser_fill_form", "generate_file")
+                if not _tc_args_str or _tc_args_str.strip() in ("", "{}", "null"):
+                    if _tc_name in _content_tools:
+                        _is_valid = False
+                        _parse_error = (f"Empty arguments for tool '{_tc_name}' — "
+                                        f"streaming likely truncated the content")
+                else:
+                    try:
+                        _parsed_check = json.loads(_tc_args_str)
+                        # Для file_write проверяем что content и path не пустые
+                        if _tc_name == "file_write":
+                            if not _parsed_check.get("content") and not _parsed_check.get("path"):
+                                _is_valid = False
+                                _parse_error = (f"file_write called with empty content/path — "
+                                                f"streaming truncated arguments")
+                            elif not _parsed_check.get("content"):
+                                _is_valid = False
+                                _parse_error = (f"file_write called with empty content — "
+                                                f"streaming truncated the file body")
+                    except json.JSONDecodeError as _je:
+                        _is_valid = False
+                        _parse_error = (f"Invalid JSON in tool '{_tc_name}' arguments — "
+                                        f"streaming truncated the response. "
+                                        f"Error: {_je}. Raw (first 200 chars): {_tc_args_str[:200]!r}")
+                if not _is_valid:
+                    _invalid_tool_calls.append((_tc_check, _parse_error))
+                    logger.warning(f"[PATCH10] Invalid/truncated tool call: {_parse_error}")
+
+            if _invalid_tool_calls:
+                # assistant_msg уже добавлен выше (строка 4390), не дублируем
+                # Для каждого невалидного tool_call добавляем ошибку как tool result
+                for _inv_tc, _inv_err in _invalid_tool_calls:
+                    _inv_id = _inv_tc.get("id", f"call_{iteration}")
+                    _inv_name = _inv_tc["function"].get("name", "unknown")
+                    _retry_hint = (
+                        "IMPORTANT: Your previous tool call arguments were truncated during streaming "
+                        "because the content was too large. Please retry with SMALLER content:\n"
+                        "- For file_write: split into multiple calls, max 6000 chars per call, "
+                        "use append=true for subsequent parts\n"
+                        "- For ssh_execute: use heredoc with shorter content\n"
+                        "- For generate_file: reduce content size or split into sections\n"
+                        f"Original error: {_inv_err}"
+                    )
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": _inv_id,
+                        "name": _inv_name,
+                        "content": _retry_hint
+                    })
+                    yield self._sse({
+                        "type": "tool_result",
+                        "tool": _inv_name,
+                        "success": False,
+                        "error": "[PATCH10] Arguments truncated by streaming — model asked to retry with smaller content",
+                        "iteration": iteration
+                    })
+                    logger.warning(f"[PATCH10] Retry requested for tool '{_inv_name}'")
+                # Продолжаем цикл — модель получит ошибку и повторит с меньшим контентом
+                continue
+
             # Execute each tool call
             for tc in tool_calls_received:
                 tool_name = tc["function"]["name"]
