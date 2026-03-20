@@ -5213,6 +5213,139 @@ ReactDOM.createRoot(document.getElementById('root')).render(<App />);
                         break
             except Exception as e:
                 yield self._sse({"type": "content", "text": f"\n\n⚠️ Агент достиг лимита итераций ({self.MAX_ITERATIONS}). Пожалуйста, уточните задачу или повторите запрос."})
+        # ── PREMIUM QC for Pro mode: runs after all iterations if premium_design=True ──
+        if getattr(self, 'premium_design', False) and self.ssh_credentials.get('host', ''):
+            # Detect if agent deployed HTML (check tool call history)
+            _pro_deployed_html = False
+            _pro_html_content = None
+            _pro_deploy_path = '/var/www/html/index.html'
+            for _m in messages:
+                if _m.get('role') == 'tool':
+                    try:
+                        _tr = json.loads(_m['content'])
+                        if isinstance(_tr, dict) and _tr.get('success') and _tr.get('command', ''):
+                            _cmd = _tr.get('command', '')
+                            if '.html' in _cmd and ('>' in _cmd or 'cp ' in _cmd or 'scp ' in _cmd or 'mv ' in _cmd):
+                                _pro_deployed_html = True
+                                # Try to extract deploy path
+                                import re as _pro_re
+                                _path_m = _pro_re.search(r'(/var/www/[^\s\'"]+\.html)', _cmd)
+                                if _path_m:
+                                    _pro_deploy_path = _path_m.group(1)
+                    except Exception:
+                        pass
+                elif _m.get('role') == 'assistant':
+                    # Check tool_calls for file_write or ssh_execute with HTML
+                    for _tc in (_m.get('tool_calls') or []):
+                        _fn = _tc.get('function', {})
+                        if _fn.get('name') in ('file_write', 'ssh_execute'):
+                            try:
+                                _args = json.loads(_fn.get('arguments', '{}'))
+                                _content = _args.get('content', '') + _args.get('command', '')
+                                if '<!DOCTYPE' in _content or '<html' in _content:
+                                    _pro_deployed_html = True
+                                    _pro_html_content = _content[:20000] if '<!DOCTYPE' in _content or '<html' in _content else _pro_html_content
+                                    _path_arg = _args.get('path', '') or _args.get('remote_path', '')
+                                    if _path_arg and _path_arg.endswith('.html'):
+                                        _pro_deploy_path = _path_arg
+                            except Exception:
+                                pass
+            if _pro_deployed_html:
+                import logging as _pqc_log2
+                _pqc_log2.info("[PremiumQC-Pro] Starting PREMIUM quality check with Opus (Pro mode)")
+                yield self._sse({"type": "content", "text": "\n\n✨ **Premium Quality Check (Pro)**: Opus проверяет дизайн (3 цикла)...\n", "agent": "Premium QC"})
+                _pqc2_host = self.ssh_credentials.get('host', '')
+                _pqc2_opus_model = "anthropic/claude-opus-4"
+                _pqc2_max = 3
+                _pqc2_html = _pro_html_content
+                # Try to get HTML from server if not captured
+                if not _pqc2_html:
+                    try:
+                        import requests as _pqc2_req_init
+                        _r = _pqc2_req_init.get(f"http://{_pqc2_host}/{_pro_deploy_path.split('/var/www/html/')[-1] if '/var/www/html/' in _pro_deploy_path else ''}", timeout=10)
+                        if _r.status_code == 200 and '<html' in _r.text.lower():
+                            _pqc2_html = _r.text[:20000]
+                    except Exception:
+                        pass
+                for _pqc2_iter in range(_pqc2_max):
+                    _pqc_log2.info(f"[PremiumQC-Pro] Cycle {_pqc2_iter+1}/{_pqc2_max}")
+                    yield self._sse({"type": "content", "text": f"\n🔄 Цикл {_pqc2_iter+1}/{_pqc2_max}:\n", "agent": "Premium QC"})
+                    _all_good2 = True
+                    try:
+                        import requests as _pqc2_req
+                        _pqc2_headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
+                        _awwwards_prompt2 = (
+                            "You are an Awwwards judge reviewing a website design.\n"
+                            "Rate on a scale 1-10 with EXTREME strictness.\n"
+                            "A score of 9+ means: wow-effect, micro-animations (CSS keyframes/transitions), "
+                            "premium shadows/gradients, glassmorphism or bold modern aesthetic, "
+                            "perfect typography (Google Fonts), compelling hero section, "
+                            "professional color palette, scroll animations (AOS/GSAP).\n"
+                            "Score 7-8 = good but lacks wow-effect or micro-animations.\n"
+                            "Score < 7 = generic template look, no premium feel.\n"
+                            "If score < 9, describe EXACTLY what CSS/HTML changes would push it to 9+.\n"
+                            "Format: SCORE: X/10\nISSUES: ...\nFIX: ..."
+                        )
+                        if _pqc2_html:
+                            _pqc2_content = [{"type": "text", "text": (
+                                f"{_awwwards_prompt2}\n\nHTML CODE:\n{_pqc2_html[:15000]}"
+                            )}]
+                        else:
+                            yield self._sse({"type": "content", "text": "  ⚠️ HTML недоступен, пропускаю цикл\n", "agent": "Premium QC"})
+                            break
+                        _pqc2_review_resp = _pqc2_req.post(self.api_url, headers=_pqc2_headers, json={
+                            "model": _pqc2_opus_model,
+                            "messages": [{"role": "user", "content": _pqc2_content}],
+                            "temperature": 0.3,
+                            "max_tokens": 2000,
+                            "stream": False,
+                        }, timeout=60)
+                        _review2 = _pqc2_review_resp.json().get("choices", [{}])[0].get("message", {}).get("content", "")
+                        yield self._sse({"type": "content", "text": f"  📋 Opus: {_review2[:300]}\n", "agent": "Premium QC"})
+                        import re as _pqc2_re
+                        _score2_match = _pqc2_re.search(r'SCORE:\s*(\d+)', _review2)
+                        _score2 = int(_score2_match.group(1)) if _score2_match else 5
+                        if _score2 < 9:
+                            _all_good2 = False
+                            yield self._sse({"type": "content", "text": f"  ⚠️ Оценка {_score2}/10 — Opus исправляет...\n", "agent": "Premium QC"})
+                            _fix2_resp = _pqc2_req.post(self.api_url, headers=_pqc2_headers, json={
+                                "model": _pqc2_opus_model,
+                                "messages": [{"role": "user", "content": [{"type": "text", "text": (
+                                    f"Fix this HTML to get 10/10 Awwwards design score. Issues: {_review2}\n\n"
+                                    "Return ONLY the complete fixed HTML. Start with <!DOCTYPE html>. "
+                                    "Add micro-animations (CSS keyframes), glassmorphism cards, premium shadows, "
+                                    "parallax hero, smooth scroll, AOS animations, Google Fonts. "
+                                    "Make it Dribbble/Awwwards quality.\n\n"
+                                    f"Current HTML:\n{_pqc2_html[:12000]}"
+                                )}]}],
+                                "temperature": 0.3,
+                                "max_tokens": 16000,
+                                "stream": False,
+                            }, timeout=120)
+                            _fixed2 = _fix2_resp.json().get("choices", [{}])[0].get("message", {}).get("content", "")
+                            if '```html' in _fixed2:
+                                _fixed2 = _fixed2.split('```html')[1].split('```')[0].strip()
+                            elif '```' in _fixed2:
+                                _fixed2 = _fixed2.split('```')[1].split('```')[0].strip()
+                            if _fixed2 and _fixed2.strip().startswith('<'):
+                                # Deploy fixed HTML via SSH
+                                _ssh_result = self._execute_tool('ssh_execute', {
+                                    'host': _pqc2_host,
+                                    'username': self.ssh_credentials.get('username', 'root'),
+                                    'password': self.ssh_credentials.get('password', ''),
+                                    'command': f"cat > {_pro_deploy_path} << 'ORION_EOF'\n{_fixed2}\nORION_EOF"
+                                })
+                                _pqc2_html = _fixed2
+                                yield self._sse({"type": "content", "text": f"  ✅ HTML исправлен Opus и задеплоен\n", "agent": "Premium QC"})
+                        else:
+                            yield self._sse({"type": "content", "text": f"\n🏆 Дизайн одобрен Opus — оценка {_score2}/10!\n", "agent": "Premium QC"})
+                    except Exception as _pqc2_e:
+                        _pqc_log2.warning(f"[PremiumQC-Pro] Error: {_pqc2_e}")
+                    if _all_good2:
+                        break
+                _pqc_log2.info("[PremiumQC-Pro] Premium quality check completed")
+        # ── END PREMIUM QC for Pro mode ──
+
         # ── USAGE: отправляем токены обратно в app.py ──
         yield self._sse({"type": "usage", "prompt_tokens": self.total_tokens_in, "completion_tokens": self.total_tokens_out})
 
