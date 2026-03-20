@@ -2400,18 +2400,78 @@ def send_message(chat_id):
                 task["status"] = "done"
                 task["finished_at"] = time.time()
 
-    def _buffered_generate():
-        """Wrapper that buffers all SSE events for reconnect support."""
-        for event in generate():
-            # Buffer event for reconnect
-            with _tasks_lock:
-                task = _running_tasks.get(chat_id)
-                if task:
-                    task["events"].append(event)
-            yield event
+    # ══ TURBO BACKGROUND THREAD: agent runs in background, SSE reads from queue ══
+    # This ensures GeneratorExit (client disconnect) does NOT kill the Turbo agent
+    import queue as _turbo_queue_module
+
+    # Pre-create task entry with queue BEFORE generate() runs
+    _turbo_q = _turbo_queue_module.Queue()
+    with _tasks_lock:
+        task = _running_tasks.get(chat_id)
+        if task:
+            task["_queue"] = _turbo_q
+        else:
+            _running_tasks[chat_id] = {
+                "status": "running",
+                "events": [],
+                "started_at": time.time(),
+                "user_id": _saved_user_id,
+                "message": user_message[:100],
+                "_queue": _turbo_q,
+            }
+
+    def _turbo_background_worker():
+        """Runs Turbo generate() in background thread, puts events into queue."""
+        _q = _turbo_q  # Use pre-created queue directly
+        if not _q:
+            logging.error(f"[TURBO BG] No queue for chat {chat_id}")
+            return
+        logging.info(f"[TURBO BG] Worker started for chat {chat_id}")
+        try:
+            for event in generate():
+                # Buffer event for reconnect
+                with _tasks_lock:
+                    task = _running_tasks.get(chat_id)
+                    if task:
+                        task["events"].append(event)
+                _q.put(event)
+        except Exception as e:
+            logging.error(f"[TURBO BG] Error: {e}")
+            _q.put(f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n")
+        finally:
+            if _q:
+                _q.put(None)  # Sentinel: stream ended
+            logging.info(f"[TURBO BG] Worker finished for chat {chat_id}")
+
+    _turbo_bg_thread = threading.Thread(target=_turbo_background_worker, daemon=True, name=f"turbo-agent-{chat_id[:8]}")
+    _turbo_bg_thread.start()
+
+    def _turbo_sse_stream():
+        """SSE stream that reads from queue. Survives client reconnects."""
+        _q = _turbo_q  # Use pre-created queue directly
+        if not _q:
+            return
+        try:
+            while True:
+                try:
+                    event = _q.get(timeout=30)  # 30s timeout per event
+                    if event is None:  # Sentinel: stream ended
+                        break
+                    yield event
+                except _turbo_queue_module.Empty:
+                    # Check if task is still running
+                    with _tasks_lock:
+                        task = _running_tasks.get(chat_id)
+                    if not task or task.get("status") == "done":
+                        break
+                    # Send keepalive
+                    yield ": keepalive\n\n"
+        except GeneratorExit:
+            logging.info(f"[TURBO SSE] Client disconnected from chat {chat_id}, agent continues in background")
+            # Do NOT stop the agent - it continues in background thread
 
     return Response(
-        stream_with_context(_buffered_generate()),
+        stream_with_context(_turbo_sse_stream()),
         mimetype="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
