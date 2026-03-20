@@ -64,6 +64,7 @@ const state = {
     currentChatId: null,
     messages: [],
     mode: 'turbo-basic',
+    premiumDesign: false,
     theme: 'light',
     isStreaming: false,
     streamController: null,
@@ -465,6 +466,8 @@ const UI = {
         });
         this.updateModeDesc();
         this.renderModeInfoBar();
+        // Premium Design toggle
+        this.renderPremiumToggle(grid);
     },
 
     renderModeInfoBar() {
@@ -485,6 +488,31 @@ const UI = {
         // ПАТЧ W1-1: Подсветить восстановленный режим
         $$('.mode-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === state.mode));
     },
+    renderPremiumToggle(grid) {
+        if (!grid) return;
+        let toggle = document.getElementById('premium-design-toggle');
+        if (toggle) toggle.remove();
+        toggle = document.createElement('label');
+        toggle.id = 'premium-design-toggle';
+        toggle.className = 'premium-design-toggle' + (state.premiumDesign ? ' active' : '');
+        toggle.innerHTML = '<span class="premium-icon">✨</span><span class="premium-label">Premium Design</span><span class="premium-price">$5-15</span>';
+        toggle.title = 'Opus дизайн + самокритика + AI фото + анализ конкурентов';
+        toggle.addEventListener('click', () => {
+            state.premiumDesign = !state.premiumDesign;
+            toggle.classList.toggle('active', state.premiumDesign);
+            try { localStorage.setItem('orion_premium_design', state.premiumDesign ? '1' : '0'); } catch(e) {}
+            Toast.show(state.premiumDesign ? '✨ Premium Design включён — Opus + самокритика' : 'Premium Design выключен', 'info');
+        });
+        // Restore from localStorage
+        try {
+            if (localStorage.getItem('orion_premium_design') === '1') {
+                state.premiumDesign = true;
+                toggle.classList.add('active');
+            }
+        } catch(e) {}
+        grid.parentElement.insertBefore(toggle, grid.nextSibling);
+    },
+
 
     showModeInfo(key) {
         const infoBar = document.getElementById('mode-info-bar');
@@ -509,6 +537,9 @@ const UI = {
         this.updateModeDesc();
         this.updateFooterInfo();
         this.showModeInfo(key);  // УЛУЧ-3: обновить инфо-бар при выборе
+        // PATCH-23: Toast notification on mode switch
+        const modeInfo = MODE_INFO[key] || MODE_INFO[key.replace('-', '_')];
+        if (modeInfo) Toast.show(modeInfo.icon + ' ' + (MODES[key]?.label || key) + ': ' + modeInfo.text, 'info');
         // Improvement 3: Update model label on mode switch
         const MODEL_LABELS = {
             'turbo-basic': 'MiniMax + MiMo',
@@ -1607,6 +1638,7 @@ const Chat = {
                     const _tpreview = typeof _targs === 'string' ? _targs.substring(0, 100) : JSON.stringify(_targs).substring(0, 100);
                     const _tdetail = { tool: _tname, emoji: this._toolEmoji(_tname), args: _targs, type: 'tool_start' };
                     ActivityPanel.addToGroup('tool-start', this._toolEmoji(_tname), _tname + ': ' + _tpreview, _tdetail);
+                    ActivityPanel.setDynamicStatus(this._dynamicStatus(_tname));
                 }
                 // ПАТЧ B1: добавляем плашку в чат
                 {
@@ -1938,6 +1970,25 @@ const Chat = {
             read_any_file: '📖', edit_image: '🖼️', generate_design: '🎨'
         };
         return map[tool] || '🔧';
+    },
+    _dynamicStatus(tool) {
+        const statusMap = {
+            ssh_execute: 'Выполняю команду...',
+            file_write: 'Пишу файл...',
+            file_read: 'Читаю файл...',
+            browser_navigate: 'Открываю страницу...',
+            browser_screenshot: 'Делаю скриншот...',
+            browser_click: 'Кликаю элемент...',
+            web_search: 'Ищу в интернете...',
+            generate_image: 'Генерирую изображение...',
+            code_interpreter: 'Выполняю код...',
+            create_artifact: 'Создаю артефакт...',
+            generate_design: 'Создаю дизайн...',
+            store_memory: 'Запоминаю...',
+            recall_memory: 'Вспоминаю...',
+            ftp_upload: 'Загружаю файл...',
+        };
+        return statusMap[tool] || 'Работает...';
     },
 
     stop() {
@@ -2809,13 +2860,17 @@ const ActivityPanel = {
         log.appendChild(line);
         state.activityLines.push({ type, emoji, text, time: timeStr, detail: detailData });
     },
-    setStatus(status) {
-        // BUG-6 FIX: HTML uses .status-dot and #status-text, not .status-pulse
+    setStatus(status, dynamicText) {
+        // BUG-6 FIX + PATCH-19: Dynamic status texts
         const dotEl = document.querySelector('.status-dot');
         const textEl = $('status-text');
         const labels = { running: 'Работает', done: 'Завершено', waiting: 'Ожидает', idle: 'Ожидает' };
         if (dotEl) dotEl.className = 'status-dot ' + status;
-        if (textEl) textEl.textContent = labels[status] || status;
+        if (textEl) textEl.textContent = dynamicText || labels[status] || status;
+    },
+    setDynamicStatus(text) {
+        const textEl = $('status-text');
+        if (textEl && text) textEl.textContent = text;
     },
 
     addLine(type, emoji, text, collapsible = false, detailData = null) {
