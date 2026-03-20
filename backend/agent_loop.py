@@ -5475,6 +5475,17 @@ class MultiAgentLoop(AgentLoop):
             })
 
 
+            # ── Initialize deploy-phase detection (needed for both premium and standard QC) ──
+            _is_deploy_phase = (
+                agent_key.lower() in ('devops', 'deployer', 'deploy', 'designer') or
+                any(kw in phase_name.lower() for kw in ('деплой', 'deploy', 'настройк', 'сервер', 'nginx', 'дизайн', 'верстк'))
+            )
+            _qc_host = self.ssh_credentials.get('host', '')
+            _qc_html_content = None
+            for _prev_phase_name, _prev_phase_text in phase_results.items():
+                if any(kw in _prev_phase_name.lower() for kw in ('дизайн', 'верстк', 'разработк', 'design', 'develop')):
+                    _qc_html_content = _prev_phase_text
+                    break
             # ── PREMIUM DESIGN QUALITY CHECK (uses Opus + 3 cycles + mobile) ──────────
             if _is_deploy_phase and _qc_host and getattr(self, 'premium_design', False):
                 import logging as _pqc_log

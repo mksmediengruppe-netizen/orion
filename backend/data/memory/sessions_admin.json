@@ -862,5 +862,53 @@
     "started_at": "2026-03-20T09:47:03.872985+00:00",
     "updated_at": "2026-03-20T09:57:57.711516+00:00",
     "resumed_count": 0
+  },
+  "df747b48": {
+    "chat_id": "df747b48",
+    "project_id": "df747b48",
+    "user_id": "admin",
+    "task": "Создай простой лендинг для IT-компании с секциями: Hero, Услуги, О нас, Контакты. Размести на сервере 45.67.57.175 в /var/www/html/landing/",
+    "status": "active",
+    "decisions": [],
+    "files_modified": [],
+    "commands_executed": [],
+    "errors": [],
+    "key_facts": [],
+    "summary": "",
+    "started_at": "2026-03-20T11:19:17.532438+00:00",
+    "updated_at": "2026-03-20T11:19:17.532460+00:00",
+    "resumed_count": 0
+  },
+  "d7daaeff": {
+    "chat_id": "d7daaeff",
+    "project_id": "d7daaeff",
+    "user_id": "admin",
+    "task": "Настрой автоматическое обновление SSL-сертификатов через certbot на сервере 45.67.57.175",
+    "status": "completed",
+    "decisions": [],
+    "files_modified": [],
+    "commands_executed": [],
+    "errors": [],
+    "key_facts": [],
+    "summary": "Настроена автоматическая проверка и обновление SSL-сертификатов через systemd timer certbot.timer, который запущен и активен. \n\nКоманда тестового обновления certbot renew --dry-run не обнаружила сертификатов, требующих обновления, что означает корректную настройку.\n\nТакже выполнен перезапуск nginx д",
+    "started_at": "2026-03-20T11:23:30.606702+00:00",
+    "updated_at": "2026-03-20T11:25:10.382369+00:00",
+    "resumed_count": 0
+  },
+  "dedd2a48": {
+    "chat_id": "dedd2a48",
+    "project_id": "dedd2a48",
+    "user_id": "admin",
+    "task": "Создай скрипт мониторинга дискового пространства с оповещением по email на сервере 45.67.57.175. Скрипт должен проверять каждый час и оповещать при заполнении >80%. Сохрани в /usr/local/bin/disk-monit",
+    "status": "completed",
+    "decisions": [],
+    "files_modified": [],
+    "commands_executed": [],
+    "errors": [],
+    "key_facts": [],
+    "summary": "Создан скрипт мониторинга дискового пространства с оповещением по email при заполнении более 80%. Скрипт сохранён в /usr/local/bin/disk-monitor.sh, сделан исполняемым и настроен запуск через cron каждый час.\n\nЕсли нужно, могу проверить работу скрипта или помочь с настройкой почтовой системы для отпр",
+    "started_at": "2026-03-20T11:25:57.003544+00:00",
+    "updated_at": "2026-03-20T11:26:49.009979+00:00",
+    "resumed_count": 0
   }
 }
