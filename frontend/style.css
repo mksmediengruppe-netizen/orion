@@ -4159,3 +4159,69 @@ img { max-width: 100%; display: block; }
     opacity: 0.7;
     margin-left: auto;
 }
+
+/* ═══ ADMIN MEMORY MANAGEMENT ═══ */
+.memory-stat-cards {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+}
+.stat-card-mini {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px 18px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-width: 100px;
+    flex: 1;
+}
+.stat-mini-value {
+    font-size: 24px;
+    font-weight: 700;
+    color: var(--text-primary);
+    line-height: 1.2;
+}
+.stat-mini-label {
+    font-size: 11px;
+    color: var(--text-tertiary);
+    margin-top: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+.memory-type-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 10px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 600;
+    white-space: nowrap;
+}
+.memory-type-badge.session {
+    background: rgba(99, 102, 241, 0.1);
+    color: #6366F1;
+}
+.memory-type-badge.persistent {
+    background: rgba(16, 185, 129, 0.1);
+    color: #10B981;
+}
+.memory-type-badge.cache {
+    background: rgba(245, 158, 11, 0.1);
+    color: #F59E0B;
+}
+.table-action-btn.delete {
+    color: #EF4444;
+    border-color: rgba(239, 68, 68, 0.3);
+}
+.table-action-btn.delete:hover {
+    background: rgba(239, 68, 68, 0.1);
+    border-color: #EF4444;
+}
+.btn-sm {
+    padding: 6px 12px;
+    font-size: 12px;
+}

@@ -508,7 +508,29 @@ TOOLS_SCHEMA = [
         "type": "function",
         "function": {
             "name": "update_scratchpad",
-            "description": "Update your internal scratchpad with thoughts, plans, and progress notes. Use this to organize your thinking and track progress on complex tasks.",
+            "description": "Update your internal scratchpad with thoughts, plans, and progress notes. Use this to organize your thinking and track progress on complex tasks."
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "update_task_charter",
+                "description": "Update the structured Task Charter with project goals, pages, style, tech stack, and status. Use this at the start of complex tasks to define the project plan. All agents can see this charter.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "field": {
+                            "type": "string",
+                            "description": "Which field to update: goal, pages, style, tech_stack, status, current_phase, quality_score, notes",
+                            "enum": ["goal", "pages", "style", "tech_stack", "status", "current_phase", "quality_score", "notes"]
+                        },
+                        "value": {
+                            "type": "string",
+                            "description": "JSON string of the new value for the field"
+                        }
+                    },
+                    "required": ["field", "value"]
+                },
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -1178,6 +1200,18 @@ ftp_list, store_memory, recall_memory, update_scratchpad, task_complete.
 Стиль: градиенты, тени shadow-2xl, hover эффекты, 
 скругления rounded-2xl, анимации, backdrop-blur.
 Минимум 500 строк HTML. Мобильная версия обязательна.
+## PREMIUM DESIGN MODE
+Если включён Premium Design:
+1. ПЕРЕД созданием HTML — найди 3 сайта конкурентов:
+   - web_search "[ниша клиента] лучший сайт дизайн 2025"
+   - browser_navigate на 3 лучших результата → скриншоты
+   - Проанализируй: что делает их дизайн отличным?
+   - "Создай ЛУЧШЕ чем эти 3 сайта"
+2. Создай 2 варианта hero секции → выбери лучший
+3. Для КАЖДОГО изображения — generate_image с детальным промптом на английском (20-30 слов)
+4. После деплоя — 3 цикла самокритики через Opus (автоматически)
+Цель: уровень Dribbble/Awwwards.
+
 
 Для изображений на сайте:
 1. Сначала создай полный HTML с placeholder: 
@@ -1376,9 +1410,21 @@ class AgentLoop:
         self._stop_requested = False
 
         # ── ORION Sprint 5: режим, сессия, scratchpad, snapshot ──
-        self.orion_mode = orion_mode or DEFAULT_MODE
+        self.orion_mode = orion_mode
+        self.premium_design = kwargs.get('premium_design', False) or DEFAULT_MODE
         self.session_id = session_id or f"sess_{int(__import__('time').time())}"
         self.scratchpad = []          # Патч 6: промежуточные мысли агента
+        self.task_charter = {           # ПАТЧ 24: Task Charter
+            "goal": "",
+            "pages": [],
+            "style": {"colors": [], "fonts": [], "framework": ""},
+            "tech_stack": [],
+            "status": "planning",
+            "phases_completed": [],
+            "current_phase": "",
+            "quality_score": 0,
+            "notes": []
+        }
         self._snapshots = []          # Патч 4: снапшоты состояния
         self._ask_user_pending = None # Патч 5: ожидание ответа пользователя
         self._intent_result = None    # Результат intent clarifier
@@ -1421,6 +1467,7 @@ class AgentLoop:
             "tokens_in": self.total_tokens_in,
             "tokens_out": self.total_tokens_out,
             "scratchpad": list(self.scratchpad),
+            "task_charter": dict(self.task_charter) if hasattr(self, "task_charter") else {},
         }
         self._snapshots.append(snap)
         logger.info(f"[snapshot] #{snap['id']} '{label}' saved")
@@ -1434,6 +1481,7 @@ class AgentLoop:
                 self.total_tokens_in = snap["tokens_in"]
                 self.total_tokens_out = snap["tokens_out"]
                 self.scratchpad = snap["scratchpad"]
+                self.task_charter = snap.get("task_charter", self.task_charter)
                 logger.info(f"[rollback] Rolled back to snapshot #{snap_id} '{snap['label']}'")
                 return True
         logger.warning(f"[rollback] Snapshot #{snap_id} not found")
@@ -1483,6 +1531,21 @@ class AgentLoop:
     def scratchpad_clear(self):
         """Очистить scratchpad."""
         self.scratchpad = []
+
+    def _check_quality_gate(self, phase_name, actions_log):
+        """PATCH 25: Quality Gate - check if phase completed successfully."""
+        if not actions_log:
+            return {"passed": False, "reason": "No actions performed"}
+        last_actions = actions_log[-5:]
+        errors = [a for a in last_actions if not a.get("success", False)]
+        successes = [a for a in last_actions if a.get("success", False)]
+        if len(errors) > len(successes):
+            return {
+                "passed": False,
+                "reason": f"Phase '{phase_name}': {len(errors)} errors vs {len(successes)} successes",
+                "errors": [str(e.get("tool", "")) for e in errors]
+            }
+        return {"passed": True, "reason": f"Phase '{phase_name}' passed quality gate"}
 
     # ── ORION Патч 7: Error Pattern Matching ─────────────────────
 
@@ -2525,6 +2588,22 @@ class AgentLoop:
                 if hasattr(self, 'scratchpad_add'):
                     self.scratchpad_add(content, category)
                 return {"success": True, "message": f"Scratchpad updated: [{category}] {content[:100]}"}
+            elif tool_name == "update_task_charter":
+                field = args.get("field", "")
+                value_str = args.get("value", "")
+                try:
+                    import json as _json24
+                    value = _json24.loads(value_str)
+                except:
+                    value = value_str
+                if hasattr(self, 'task_charter') and field in self.task_charter:
+                    if isinstance(self.task_charter[field], list) and isinstance(value, str):
+                        self.task_charter[field].append(value)
+                    else:
+                        self.task_charter[field] = value
+                    return {"success": True, "field": field, "updated": True, "charter": self.task_charter}
+                else:
+                    return {"success": False, "error": f"Unknown charter field: {field}"}
             elif tool_name == "update_scratchpad":
                 content = args.get("content", "")
                 category = args.get("category", "thought")
@@ -4940,6 +5019,18 @@ ReactDOM.createRoot(document.getElementById('root')).render(<App />);
         # Принудительный финальный ответ если агент достиг MAX_ITERATIONS без task_complete
         if not full_response_text.strip():
             yield self._sse({"type": "content", "text": "⚠️ Агент достиг лимита итераций. Запрашиваю финальный ответ..."})
+            # PATCH 26: Save failure to Solution Cache
+            try:
+                if not self._solution_cache:
+                    self._solution_cache = SolutionCache(call_ai_simple_fn=self._call_ai_simple)
+                _fail_extracted = SolutionExtractor.extract(self.actions_log, user_message, "FAILED: max iterations reached without task_complete")
+                _fail_extracted["confidence"] = 0.2  # Low confidence — this is a failure
+                _fail_extracted["status"] = "failed"
+                _fail_extracted["failure_reason"] = "max_iterations_reached"
+                self._solution_cache.save(user_message, _fail_extracted, agent_key=getattr(self, '_agent_key', ''))
+                logger.info(f"[PATCH26] Failure saved to solution cache: {len(_fail_extracted.get('errors_and_fixes', []))} errors")
+            except Exception as _p26_err:
+                logger.debug(f"PATCH26 save failure error: {_p26_err}")
             try:
                 # Собрать контекст выполненных действий для финального ответа
                 tool_results_summary = []
@@ -5201,6 +5292,15 @@ class MultiAgentLoop(AgentLoop):
                         phase_text += "\n[ФАЗА ЗАВЕРШЕНА]"
                         yield self._sse({"type": "tool_start", "tool": "task_complete", "args": tool_args})
                         messages.append({"role": "tool", "tool_call_id": tool_id, "content": "Phase completed"})
+                        # PATCH 25: Quality Gate after pipeline phase
+                        if hasattr(self, '_check_quality_gate'):
+                            _qg = self._check_quality_gate(phase_name, self.actions_log)
+                            if _qg["passed"]:
+                                logging.info(f"[QualityGate] Phase '{phase_name}' PASSED")
+                                yield self._sse({"type": "quality_gate", "phase": phase_name, "passed": True})
+                            else:
+                                logging.warning(f"[QualityGate] Phase '{phase_name}' FAILED: {_qg['reason']}")
+                                yield self._sse({"type": "quality_gate", "phase": phase_name, "passed": False, "reason": _qg["reason"]})
                         tool_calls_received = None
                         break
                     
@@ -5239,7 +5339,115 @@ class MultiAgentLoop(AgentLoop):
                 "role": agent_key
             })
 
-            # ── QUALITY CHECK CYCLE: after deploy phases ──────────────────────────────
+
+            # ── PREMIUM DESIGN QUALITY CHECK (uses Opus + 3 cycles + mobile) ──────────
+            if _is_deploy_phase and _qc_host and getattr(self, 'premium_design', False):
+                import logging as _pqc_log
+                _pqc_log.info("[PremiumQC] Starting PREMIUM quality check with Opus")
+                yield self._sse({"type": "content", "text": "\n\n✨ **Premium Quality Check**: Opus проверяет дизайн (3 цикла)...\n", "agent": "Premium QC"})
+                _pqc_opus_model = "anthropic/claude-opus-4"
+                _pqc_max = 3
+                _pqc_viewports = [
+                    {"name": "Desktop", "width": 1920, "height": 1080, "emoji": "🖥️"},
+                    {"name": "Mobile", "width": 375, "height": 812, "emoji": "📱"},
+                ]
+                _pqc_html_content = _qc_html_content if '_qc_html_content' in dir() else None
+                
+                for _pqc_iter in range(_pqc_max):
+                    _pqc_log.info(f"[PremiumQC] Cycle {_pqc_iter+1}/{_pqc_max}")
+                    yield self._sse({"type": "content", "text": f"\n🔄 Цикл {_pqc_iter+1}/{_pqc_max}:\n", "agent": "Premium QC"})
+                    
+                    _all_good = True
+                    for _vp in _pqc_viewports:
+                        yield self._sse({"type": "content", "text": f"  {_vp['emoji']} Скриншот {_vp['name']}...\n", "agent": "Premium QC"})
+                        try:
+                            # Set viewport size
+                            self._execute_tool('browser_navigate', {'url': f"http://{_qc_host}"})
+                            import time; time.sleep(2)
+                            _ss = self._execute_tool('browser_screenshot', {})
+                            _ss_b64 = _ss.get('screenshot', '')
+                            if not _ss_b64:
+                                continue
+                            if 'base64,' in _ss_b64:
+                                _ss_b64 = _ss_b64.split('base64,')[1]
+                            
+                            # Opus reviews
+                            import requests as _pqc_req
+                            _pqc_headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
+                            _pqc_review = _pqc_req.post(self.api_url, headers=_pqc_headers, json={
+                                "model": _pqc_opus_model,
+                                "messages": [{"role": "user", "content": [
+                                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{_ss_b64}"}},
+                                    {"type": "text", "text": (
+                                        f"Rate this website design ({_vp['name']} view) on a scale 1-10. "
+                                        "Be critical. Check: visual hierarchy, typography, spacing, colors, "
+                                        "responsiveness, modern feel (gradients, shadows, animations). "
+                                        "If score < 9, describe EXACTLY what to fix. "
+                                        "Format: SCORE: X/10\nISSUES: ...\nFIX: ..."
+                                    )}
+                                ]}],
+                                "temperature": 0.3,
+                                "max_tokens": 2000,
+                                "stream": False,
+                            }, timeout=60)
+                            
+                            _review = _pqc_review.json().get("choices", [{}])[0].get("message", {}).get("content", "")
+                            yield self._sse({"type": "content", "text": f"  📋 Opus ({_vp['name']}): {_review[:200]}\n", "agent": "Premium QC"})
+                            
+                            # Check score
+                            import re as _pqc_re
+                            _score_match = _pqc_re.search(r'SCORE:\s*(\d+)', _review)
+                            _score = int(_score_match.group(1)) if _score_match else 5
+                            
+                            if _score < 9:
+                                _all_good = False
+                                yield self._sse({"type": "content", "text": f"  ⚠️ Оценка {_score}/10 — исправляю...\n", "agent": "Premium QC"})
+                                
+                                # Opus fixes HTML
+                                _fix_resp = _pqc_req.post(self.api_url, headers=_pqc_headers, json={
+                                    "model": _pqc_opus_model,
+                                    "messages": [{"role": "user", "content": [
+                                        {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{_ss_b64}"}},
+                                        {"type": "text", "text": (
+                                            f"Fix this HTML to get 10/10 design score. Issues: {_review}\n\n"
+                                            "Return ONLY the complete fixed HTML. Start with <!DOCTYPE html>. "
+                                            "Use Tailwind CSS, modern gradients, shadows, animations. "
+                                            "Make it Dribbble/Awwwards quality."
+                                            + (f"\n\nCurrent HTML:\n{_pqc_html_content[:12000]}" if _pqc_html_content else "")
+                                        )}
+                                    ]}],
+                                    "temperature": 0.3,
+                                    "max_tokens": 16000,
+                                    "stream": False,
+                                }, timeout=90)
+                                
+                                _fixed = _fix_resp.json().get("choices", [{}])[0].get("message", {}).get("content", "")
+                                if '```html' in _fixed:
+                                    _fixed = _fixed.split('```html')[1].split('```')[0].strip()
+                                elif '```' in _fixed:
+                                    _fixed = _fixed.split('```')[1].split('```')[0].strip()
+                                
+                                if _fixed and _fixed.strip().startswith('<'):
+                                    self._execute_tool('file_write', {
+                                        'host': _qc_host,
+                                        'username': self.ssh_credentials.get('username', 'root'),
+                                        'password': self.ssh_credentials.get('password', ''),
+                                        'path': '/var/www/html/index.html',
+                                        'content': _fixed
+                                    })
+                                    _pqc_html_content = _fixed
+                                    yield self._sse({"type": "content", "text": f"  ✅ HTML исправлен Opus\n", "agent": "Premium QC"})
+                        except Exception as _pqc_e:
+                            _pqc_log.warning(f"[PremiumQC] Error: {_pqc_e}")
+                    
+                    if _all_good:
+                        yield self._sse({"type": "content", "text": f"\n🏆 Дизайн одобрен Opus — оценка 9+/10!\n", "agent": "Premium QC"})
+                        break
+                
+                _pqc_log.info("[PremiumQC] Premium quality check completed")
+            # ── END PREMIUM DESIGN QUALITY CHECK ──────────────────────────────────
+
+            # ── QUALITY CHECK CYCLE: after deploy phases (PATCH-13: + mobile screenshot) ──
             # Detect if this was a deploy phase by agent key or phase name
             _is_deploy_phase = (
                 agent_key.lower() in ('devops', 'deployer', 'deploy') or
@@ -5419,6 +5627,93 @@ class MultiAgentLoop(AgentLoop):
 
                 _qc_log.info(f"[QualityCheck] Completed after {_qc_iteration} iteration(s)")
             # ── END QUALITY CHECK CYCLE ──────────────────────────────────────────────
+            # ── AUTO-PHOTO CHECK (PATCH-14): find missing images and generate ──────────
+            if _is_deploy_phase and _qc_host:
+                import logging as _ap_log
+                _ap_log.info("[AutoPhoto] Starting auto-photo check")
+                yield self._sse({"type": "content", "text": "\n🖼️ **Auto-Photo**: Проверяю изображения на сайте...\n", "agent": "Auto Photo"})
+                try:
+                    # Get HTML content from server
+                    _ap_html_result = self._execute_tool('ssh_execute', {
+                        'host': _qc_host,
+                        'username': self.ssh_credentials.get('username', 'root'),
+                        'password': self.ssh_credentials.get('password', ''),
+                        'command': 'cat /var/www/html/index.html 2>/dev/null || cat /var/www/*/index.html 2>/dev/null | head -500'
+                    })
+                    _ap_html = _ap_html_result.get('output', '') if _ap_html_result.get('success') else ''
+                    
+                    # Find all img src with placeholder or missing images
+                    import re as _ap_re
+                    _placeholder_imgs = _ap_re.findall(r'<img[^>]+src=["']([^"']*(?:placehold|placeholder|photo\d|image\d|hero|about|team|service)[^"']*)["']', _ap_html, _ap_re.IGNORECASE)
+                    
+                    if _placeholder_imgs:
+                        _ap_log.info(f"[AutoPhoto] Found {len(_placeholder_imgs)} placeholder images")
+                        yield self._sse({"type": "content", "text": f"📸 Найдено {len(_placeholder_imgs)} placeholder изображений. Генерирую AI фото...\n", "agent": "Auto Photo"})
+                        
+                        _generated_count = 0
+                        for _img_idx, _img_src in enumerate(_placeholder_imgs[:6]):  # Max 6 images
+                            # Generate descriptive prompt based on image context
+                            _img_context = _img_src.lower()
+                            _prompts = {
+                                'hero': 'Professional modern office interior with natural lighting, minimalist design, 8k quality, photorealistic',
+                                'about': 'Professional team meeting in modern conference room, diverse people collaborating, warm lighting, 8k quality',
+                                'team': 'Professional portrait of business person in modern office, confident smile, soft lighting, 8k quality',
+                                'service': 'Abstract technology concept with glowing blue connections and data visualization, dark background, 8k quality',
+                            }
+                            _prompt = 'Professional high quality business photo, modern clean aesthetic, 8k quality photorealistic'
+                            for _key, _val in _prompts.items():
+                                if _key in _img_context:
+                                    _prompt = _val
+                                    break
+                            
+                            try:
+                                _gen_result = self._execute_tool('generate_image', {
+                                    'prompt': _prompt,
+                                    'width': 800,
+                                    'height': 600
+                                })
+                                if _gen_result.get('success') and _gen_result.get('url'):
+                                    _generated_count += 1
+                                    yield self._sse({"type": "content", "text": f"  ✅ Фото {_generated_count} сгенерировано\n", "agent": "Auto Photo"})
+                            except Exception as _gen_e:
+                                _ap_log.warning(f"[AutoPhoto] generate_image failed: {_gen_e}")
+                        
+                        if _generated_count > 0:
+                            yield self._sse({"type": "content", "text": f"🖼️ Сгенерировано {_generated_count} AI фото\n", "agent": "Auto Photo"})
+                    else:
+                        yield self._sse({"type": "content", "text": "✅ Placeholder изображений не найдено\n", "agent": "Auto Photo"})
+                except Exception as _ap_e:
+                    _ap_log.warning(f"[AutoPhoto] Error: {_ap_e}")
+            # ── END AUTO-PHOTO CHECK ──────────────────────────────────────────────
+            # ── TAILWIND CDN CHECK (PATCH-15) ──────────────────────────────
+            if _is_deploy_phase and _qc_host:
+                import logging as _tw_log
+                try:
+                    _tw_result = self._execute_tool('ssh_execute', {
+                        'host': _qc_host,
+                        'username': self.ssh_credentials.get('username', 'root'),
+                        'password': self.ssh_credentials.get('password', ''),
+                        'command': 'grep -l "cdn.tailwindcss" /var/www/html/index.html /var/www/*/index.html 2>/dev/null || echo "NO_TAILWIND"'
+                    })
+                    _tw_output = _tw_result.get('output', '') if _tw_result.get('success') else 'NO_TAILWIND'
+                    if 'NO_TAILWIND' in _tw_output:
+                        _tw_log.info("[TailwindCheck] Tailwind CDN not found, adding...")
+                        yield self._sse({"type": "content", "text": "⚠️ Tailwind CDN не найден — добавляю...\n", "agent": "Tailwind Check"})
+                        # Add Tailwind CDN to head
+                        self._execute_tool('ssh_execute', {
+                            'host': _qc_host,
+                            'username': self.ssh_credentials.get('username', 'root'),
+                            'password': self.ssh_credentials.get('password', ''),
+                            'command': "sed -i 's|</head>|<script src="https://cdn.tailwindcss.com"></script>\n</head>|' /var/www/html/index.html 2>/dev/null"
+                        })
+                        yield self._sse({"type": "content", "text": "✅ Tailwind CDN добавлен\n", "agent": "Tailwind Check"})
+                    else:
+                        yield self._sse({"type": "content", "text": "✅ Tailwind CDN подключён\n", "agent": "Tailwind Check"})
+                except Exception as _tw_e:
+                    _tw_log.warning(f"[TailwindCheck] Error: {_tw_e}")
+            # ── END TAILWIND CDN CHECK ──────────────────────────────────────
+
+
 
         # All phases complete
         yield self._sse({

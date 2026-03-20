@@ -75,7 +75,7 @@ const state = {
     taskProgress: { current: 0, total: 0, steps: [] },
     totalCost: 0,
     monthlyLimit: 2.00,
-    adminData: { users: [], chats: [], analytics: null }
+    adminData: { users: [], chats: [], analytics: null, memories: [] }
 };
 
 /* ── DOM REFS ─────────────────────────────────────────────── */
@@ -1422,6 +1422,7 @@ const Chat = {
             const body = {
                 message: text,
                 mode: state.mode,
+                premium_design: state.premiumDesign || false,
                 attachments: attachments.map(a => a.id || a.url).filter(Boolean),
                 verify: document.getElementById('verification-toggle')?.checked || false
             };
@@ -3440,6 +3441,7 @@ const AdminPanel = {
             case 'users': await this.loadUsers(); break;
             case 'chats': await this.loadAllChats(); break;
             case 'analytics': await this.loadAnalytics(); break;
+            case 'memory': await this.loadMemory(); break;
         }
     },
 
@@ -3781,6 +3783,118 @@ const AdminPanel = {
         }
     },
 
+
+    // ═══ MEMORY MANAGEMENT ═══
+    memoryData: [],
+    async loadMemory() {
+        const container = $('tab-memory');
+        if (!container) return;
+        const tbody = $('memory-tbody');
+        const stats = $('memory-stats');
+        if (tbody) tbody.innerHTML = '<tr><td colspan="6"><div class="empty-state"><div class="spinner"></div></div></td></tr>';
+        try {
+            const data = await API.get('/admin/memory');
+            this.memoryData = data.memories || [];
+            if (stats) {
+                const s = data.sources || {};
+                stats.innerHTML = `
+                    <div class="memory-stat-cards">
+                        <div class="stat-card-mini"><span class="stat-mini-value">${data.total || 0}</span><span class="stat-mini-label">Всего записей</span></div>
+                        <div class="stat-card-mini"><span class="stat-mini-value">${s.sessions || 0}</span><span class="stat-mini-label">Сессий</span></div>
+                        <div class="stat-card-mini"><span class="stat-mini-value">${s.persistent || 0}</span><span class="stat-mini-label">Постоянных</span></div>
+                        <div class="stat-card-mini"><span class="stat-mini-value">${s.cache || 0}</span><span class="stat-mini-label">Кэш</span></div>
+                    </div>`;
+            }
+            this.renderMemory(this.memoryData);
+            const userSelect = $('memory-form-user');
+            if (userSelect && state.adminData.users) {
+                userSelect.innerHTML = state.adminData.users.map(u =>
+                    `<option value="${u.id}">${Utils.escapeHtml(u.full_name || u.username || u.id)}</option>`
+                ).join('') || '<option value="admin">admin</option>';
+            }
+        } catch (e) {
+            if (tbody) tbody.innerHTML = `<tr><td colspan="6"><div class="empty-state"><div class="empty-state-desc">Ошибка: ${Utils.escapeHtml(e.message)}</div></div></td></tr>`;
+        }
+    },
+    renderMemory(memories) {
+        const tbody = $('memory-tbody');
+        if (!tbody) return;
+        if (!memories.length) {
+            tbody.innerHTML = '<tr><td colspan="6"><div class="empty-state"><div class="empty-state-desc">Нет записей в памяти</div></div></td></tr>';
+            return;
+        }
+        const typeIcons = { session: '💬', persistent: '📌', cache: '⚡' };
+        const typeLabels = { session: 'Сессия', persistent: 'Постоянная', cache: 'Кэш' };
+        tbody.innerHTML = memories.map(m => `
+            <tr data-memory-id="${Utils.escapeHtml(m.id)}" data-type="${m.type}" data-search="${Utils.escapeHtml((m.key + ' ' + m.value).toLowerCase())}">
+                <td><span class="memory-type-badge ${m.type}">${typeIcons[m.type] || '📝'} ${typeLabels[m.type] || m.type}</span></td>
+                <td style="font-size:12px">${Utils.escapeHtml(m.user_id || '—')}</td>
+                <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500" title="${Utils.escapeHtml(m.key)}">${Utils.escapeHtml(m.key)}</td>
+                <td style="max-width:250px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;color:var(--text-secondary)" title="${Utils.escapeHtml(m.value)}">${Utils.escapeHtml(m.value)}</td>
+                <td style="font-size:11px;color:var(--text-tertiary)">${Utils.escapeHtml(m.source || '—')}</td>
+                <td>
+                    <button class="table-action-btn delete" onclick="AdminPanel.deleteMemory('${Utils.escapeHtml(m.id)}')">Удалить</button>
+                </td>
+            </tr>`).join('');
+    },
+    filterMemory(query) {
+        const q = query.toLowerCase().trim();
+        const typeFilter = ($('memory-type-filter') || {}).value || '';
+        const rows = document.querySelectorAll('#memory-tbody tr');
+        rows.forEach(row => {
+            const matchText = !q || (row.dataset.search || '').includes(q);
+            const matchType = !typeFilter || row.dataset.type === typeFilter;
+            row.style.display = matchText && matchType ? '' : 'none';
+        });
+    },
+    filterMemoryType(type) {
+        const query = ($('memory-search') || {}).value || '';
+        this.filterMemory(query);
+    },
+    async deleteMemory(memoryId) {
+        if (!confirm('Удалить эту запись из памяти?')) return;
+        try {
+            await API.delete('/admin/memory/' + memoryId);
+            Toast.show('Запись удалена', 'success');
+            await this.loadMemory();
+        } catch (e) {
+            Toast.show('Ошибка: ' + e.message, 'error');
+        }
+    },
+    async clearSessionMemory() {
+        if (!confirm('Очистить ВСЮ память сессий? Это действие необратимо.')) return;
+        try {
+            const result = await API.post('/admin/memory/clear-sessions');
+            Toast.show('Очищено ' + (result.cleared || 0) + ' сессий', 'success');
+            await this.loadMemory();
+        } catch (e) {
+            Toast.show('Ошибка: ' + e.message, 'error');
+        }
+    },
+    showAddMemory() {
+        const modal = $('add-memory-modal');
+        if (modal) {
+            const form = $('memory-form');
+            if (form) form.reset();
+            modal.classList.remove('hidden');
+        }
+    },
+    async saveMemory(e) {
+        e.preventDefault();
+        const key = ($('memory-form-key') || {}).value || '';
+        const value = ($('memory-form-value') || {}).value || '';
+        const userId = ($('memory-form-user') || {}).value || 'admin';
+        const category = ($('memory-form-category') || {}).value || 'fact';
+        if (!key || !value) { Toast.show('Заполните все поля', 'error'); return; }
+        try {
+            await API.post('/admin/memory', { key, value, user_id: userId, category });
+            Toast.show('Запись добавлена', 'success');
+            $('add-memory-modal').classList.add('hidden');
+            await this.loadMemory();
+        } catch (e2) {
+            Toast.show('Ошибка: ' + e2.message, 'error');
+        }
+    },
     async toggleBlock(userId, isBlocked) {
         try {
             await API.put('/admin/users/' + userId, { is_blocked: !isBlocked });
