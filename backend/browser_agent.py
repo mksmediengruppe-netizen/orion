@@ -58,8 +58,24 @@ _pw_playwright = None
 _user_takeover_active = False
 _user_takeover_event = threading.Event()
 
+# ── FIX: Dedicated thread for Playwright (asyncio loop conflict) ──
+import concurrent.futures
+_pw_thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="pw")
 
-def _get_pw_page(url: str = None, width: int = 1280, height: int = 800):
+def _run_in_pw_thread(fn, *args, **kwargs):
+    """Run a function in the dedicated Playwright thread (no asyncio loop)."""
+    try:
+        future = _pw_thread_pool.submit(fn, *args, **kwargs)
+        return future.result(timeout=60)
+    except concurrent.futures.TimeoutError:
+        logger.error("[PW] Playwright operation timed out (60s)")
+        return None
+    except Exception as e:
+        logger.error(f"[PW] Thread pool error: {e}")
+        raise
+
+
+def _get_pw_page_impl(url: str = None, width: int = 1280, height: int = 800):
     """
     Получить или создать Playwright page.
     Если url задан — навигируем на него.
@@ -189,6 +205,347 @@ def _trigger_input_events(page, selector: str):
         pass
 
 
+
+def _pw_navigate(url, width=1280, height=800):
+    """Navigate to URL in the dedicated Playwright thread. Returns dict."""
+    def _do():
+        global _pw_browser, _pw_context, _pw_page, _pw_playwright
+        if not _playwright_available:
+            return None
+        def _op():
+            with _pw_lock:
+                pw, br, ctx, page = _get_pw_page_impl(url, width, height)
+                if page is None:
+                    return None
+                title = ""
+                try:
+                    title = page.title()
+                except Exception:
+                    pass
+                screenshot = _take_screenshot_safe(page)
+                # Extract page info
+                page_info = {}
+                try:
+                    page_info = {
+                        "url": page.url,
+                        "title": title,
+                        "forms": [],
+                        "links": [],
+                        "buttons": [],
+                        "inputs": [],
+                    }
+                    # Get visible text
+                    try:
+                        page_info["text"] = page.evaluate("() => document.body?.innerText?.substring(0, 5000) || ''")
+                    except Exception:
+                        page_info["text"] = ""
+                    # Get forms
+                    try:
+                        page_info["forms"] = page.evaluate("""() => {
+                            return Array.from(document.querySelectorAll('form')).slice(0, 5).map(f => ({
+                                action: f.action, method: f.method, id: f.id,
+                                inputs: Array.from(f.querySelectorAll('input,select,textarea')).map(i => ({
+                                    type: i.type, name: i.name, id: i.id, placeholder: i.placeholder, value: i.value?.substring(0,50)
+                                }))
+                            }))
+                        }""")
+                    except Exception:
+                        pass
+                    # Get links
+                    try:
+                        page_info["links"] = page.evaluate("""() => {
+                            return Array.from(document.querySelectorAll('a[href]')).slice(0, 30).map(a => ({
+                                text: a.innerText?.trim()?.substring(0, 80), href: a.href
+                            })).filter(a => a.text)
+                        }""")
+                    except Exception:
+                        pass
+                    # Get buttons
+                    try:
+                        page_info["buttons"] = page.evaluate("""() => {
+                            return Array.from(document.querySelectorAll('button, input[type=submit], [role=button]')).slice(0, 20).map(b => ({
+                                text: b.innerText?.trim()?.substring(0, 80) || b.value || '', type: b.type, id: b.id
+                            })).filter(b => b.text)
+                        }""")
+                    except Exception:
+                        pass
+                except Exception as e:
+                    logger.warning(f"[PW] page_info extraction error: {e}")
+                return {
+                    "success": True,
+                    "url": page.url,
+                    "title": title,
+                    "status_code": 200,
+                    "page_info": page_info,
+                    "screenshot": screenshot
+                }
+        result = _run_in_pw_thread(_op)
+        if result is not None:
+            return result
+        return {"success": False, "error": "Playwright thread failed"}
+    try:
+        result = _run_in_pw_thread(_do)
+        return result
+    except Exception as e:
+        logger.error(f"[PW] _pw_navigate error: {e}")
+        return None
+
+def _pw_click(selector):
+    """Click element in the dedicated Playwright thread."""
+    def _do():
+        def _op():
+            with _pw_lock:
+                pw, br, ctx, page = _get_pw_page_impl()
+                if page is None:
+                    return {"success": False, "error": "No page"}
+                try:
+                    page.click(selector, timeout=10000)
+                    page.wait_for_timeout(1000)
+                    screenshot = _take_screenshot_safe(page)
+                    return {"success": True, "url": page.url, "screenshot": screenshot}
+                except Exception as e:
+                    return {"success": False, "error": str(e)}
+        result = _run_in_pw_thread(_op)
+        if result is not None:
+            return result
+        return {"success": False, "error": "Playwright thread failed"}
+    return _run_in_pw_thread(_do)
+
+def _pw_fill(selector, value):
+    """Fill input in the dedicated Playwright thread."""
+    def _do():
+        def _op():
+            with _pw_lock:
+                pw, br, ctx, page = _get_pw_page_impl()
+                if page is None:
+                    return {"success": False, "error": "No page"}
+                try:
+                    page.fill(selector, value, timeout=10000)
+                    return {"success": True}
+                except Exception as e:
+                    return {"success": False, "error": str(e)}
+        result = _run_in_pw_thread(_op)
+        if result is not None:
+            return result
+        return {"success": False, "error": "Playwright thread failed"}
+    return _run_in_pw_thread(_do)
+
+def _pw_type_text(selector, value):
+    """Type text in the dedicated Playwright thread."""
+    def _do():
+        def _op():
+            with _pw_lock:
+                pw, br, ctx, page = _get_pw_page_impl()
+                if page is None:
+                    return {"success": False, "error": "No page"}
+                try:
+                    page.click(selector, timeout=5000)
+                    page.keyboard.type(value, delay=50)
+                    return {"success": True}
+                except Exception as e:
+                    return {"success": False, "error": str(e)}
+        result = _run_in_pw_thread(_op)
+        if result is not None:
+            return result
+        return {"success": False, "error": "Playwright thread failed"}
+    return _run_in_pw_thread(_do)
+
+def _pw_press_key(key):
+    """Press key in the dedicated Playwright thread."""
+    def _do():
+        def _op():
+            with _pw_lock:
+                pw, br, ctx, page = _get_pw_page_impl()
+                if page is None:
+                    return {"success": False, "error": "No page"}
+                try:
+                    page.keyboard.press(key)
+                    page.wait_for_timeout(500)
+                    return {"success": True, "url": page.url}
+                except Exception as e:
+                    return {"success": False, "error": str(e)}
+        result = _run_in_pw_thread(_op)
+        if result is not None:
+            return result
+        return {"success": False, "error": "Playwright thread failed"}
+    return _run_in_pw_thread(_do)
+
+def _pw_screenshot():
+    """Take screenshot in the dedicated Playwright thread."""
+    def _do():
+        def _op():
+            with _pw_lock:
+                pw, br, ctx, page = _get_pw_page_impl()
+                if page is None:
+                    return None
+                return _take_screenshot_safe(page)
+        result = _run_in_pw_thread(_op)
+        if result is not None:
+            return result
+        return {"success": False, "error": "Playwright thread failed"}
+    return _run_in_pw_thread(_do)
+
+def _pw_execute_js(code_str):
+    """Execute JS in the dedicated Playwright thread."""
+    def _do():
+        def _op():
+            with _pw_lock:
+                pw, br, ctx, page = _get_pw_page_impl()
+                if page is None:
+                    return {"success": False, "error": "No page"}
+                try:
+                    result = page.evaluate(code_str)
+                    return {"success": True, "result": result}
+                except Exception as e:
+                    return {"success": False, "error": str(e)}
+        result = _run_in_pw_thread(_op)
+        if result is not None:
+            return result
+        return {"success": False, "error": "Playwright thread failed"}
+    return _run_in_pw_thread(_do)
+
+def _pw_select_option(selector, value):
+    """Select option in the dedicated Playwright thread."""
+    def _do():
+        def _op():
+            with _pw_lock:
+                pw, br, ctx, page = _get_pw_page_impl()
+                if page is None:
+                    return {"success": False, "error": "No page"}
+                try:
+                    page.select_option(selector, value, timeout=10000)
+                    return {"success": True}
+                except Exception as e:
+                    return {"success": False, "error": str(e)}
+        result = _run_in_pw_thread(_op)
+        if result is not None:
+            return result
+        return {"success": False, "error": "Playwright thread failed"}
+    return _run_in_pw_thread(_do)
+
+def _pw_wait_for(selector=None, url_pattern=None, timeout=15000):
+    """Wait for element or URL in the dedicated Playwright thread."""
+    def _do():
+        def _op():
+            with _pw_lock:
+                pw, br, ctx, page = _get_pw_page_impl()
+                if page is None:
+                    return {"success": False, "error": "No page"}
+                try:
+                    if selector:
+                        page.wait_for_selector(selector, timeout=timeout)
+                    if url_pattern:
+                        page.wait_for_url(url_pattern, timeout=timeout)
+                    return {"success": True, "url": page.url}
+                except Exception as e:
+                    return {"success": False, "error": str(e)}
+        result = _run_in_pw_thread(_op)
+        if result is not None:
+            return result
+        return {"success": False, "error": "Playwright thread failed"}
+    return _run_in_pw_thread(_do)
+
+def _pw_get_page_text():
+    """Get page text content in the dedicated Playwright thread."""
+    def _do():
+        def _op():
+            with _pw_lock:
+                pw, br, ctx, page = _get_pw_page_impl()
+                if page is None:
+                    return ""
+                try:
+                    return page.evaluate("() => document.body?.innerText || ''")
+                except Exception:
+                    return ""
+        result = _run_in_pw_thread(_op)
+        if result is not None:
+            return result
+        return {"success": False, "error": "Playwright thread failed"}
+    return _run_in_pw_thread(_do)
+
+def _pw_scroll(direction="down", amount=500):
+    """Scroll page in the dedicated Playwright thread."""
+    def _do():
+        def _op():
+            with _pw_lock:
+                pw, br, ctx, page = _get_pw_page_impl()
+                if page is None:
+                    return {"success": False, "error": "No page"}
+                try:
+                    if direction == "down":
+                        page.evaluate(f"window.scrollBy(0, {amount})")
+                    elif direction == "up":
+                        page.evaluate(f"window.scrollBy(0, -{amount})")
+                    page.wait_for_timeout(500)
+                    screenshot = _take_screenshot_safe(page)
+                    return {"success": True, "screenshot": screenshot}
+                except Exception as e:
+                    return {"success": False, "error": str(e)}
+        result = _run_in_pw_thread(_op)
+        if result is not None:
+            return result
+        return {"success": False, "error": "Playwright thread failed"}
+    return _run_in_pw_thread(_do)
+
+def _pw_hover(selector):
+    """Hover over element in the dedicated Playwright thread."""
+    def _do():
+        def _op():
+            with _pw_lock:
+                pw, br, ctx, page = _get_pw_page_impl()
+                if page is None:
+                    return {"success": False, "error": "No page"}
+                try:
+                    page.hover(selector, timeout=10000)
+                    return {"success": True}
+                except Exception as e:
+                    return {"success": False, "error": str(e)}
+        result = _run_in_pw_thread(_op)
+        if result is not None:
+            return result
+        return {"success": False, "error": "Playwright thread failed"}
+    return _run_in_pw_thread(_do)
+
+def _pw_get_elements(selector):
+    """Get elements in the dedicated Playwright thread."""
+    def _do():
+        def _op():
+            with _pw_lock:
+                pw, br, ctx, page = _get_pw_page_impl()
+                if page is None:
+                    return []
+                try:
+                    return page.evaluate(f"""() => {{
+                        return Array.from(document.querySelectorAll('{selector}')).slice(0, 50).map((el, i) => ({{
+                            index: i,
+                            tag: el.tagName.toLowerCase(),
+                            text: el.innerText?.trim()?.substring(0, 200) || '',
+                            href: el.href || '',
+                            value: el.value || '',
+                            id: el.id || '',
+                            className: el.className || '',
+                            type: el.type || '',
+                            name: el.name || ''
+                        }}))
+                    }}""")
+                except Exception:
+                    return []
+        result = _run_in_pw_thread(_op)
+        if result is not None:
+            return result
+        return {"success": False, "error": "Playwright thread failed"}
+    return _run_in_pw_thread(_do)
+
+
+def _get_pw_page(url: str = None, width: int = 1280, height: int = 800):
+    """Wrapper that runs _get_pw_page_impl in a dedicated thread to avoid asyncio conflicts."""
+    try:
+        return _run_in_pw_thread(_get_pw_page_impl, url, width, height)
+    except Exception as e:
+        logger.error(f"[PW] _get_pw_page thread wrapper error: {e}")
+        return None, None, None, None
+
+
 class BrowserAgent:
     """Universal browser agent for web automation with user takeover support."""
 
@@ -207,6 +564,15 @@ class BrowserAgent:
         # Директория для скриншотов takeover
         self._screenshot_dir = "/var/www/orion/backend/static/screenshots"
         os.makedirs(self._screenshot_dir, exist_ok=True)
+    def _run_pw(self, fn):
+        """Run a function that uses Playwright page in the dedicated thread."""
+        try:
+            return _run_in_pw_thread(fn)
+        except Exception as e:
+            logger.error(f"[PW] _run_pw error: {e}")
+            return None
+
+
 
     # ══════════════════════════════════════════════════════════════════
     # ██ НАВИГАЦИЯ ██
@@ -221,35 +587,14 @@ class BrowserAgent:
             if not _playwright_available:
                 return self._navigate_requests(url)
 
-            with _pw_lock:
-                _, _, _, page = _get_pw_page(url)
-                if page is None:
-                    logger.warning(f"[PW] navigate: page is None, falling back to requests for {url}")
-                    return self._navigate_requests(url)
-
-                self._current_url = page.url
-                title = ""
-                try:
-                    title = page.title()
-                except Exception:
-                    pass
-
-                screenshot = _take_screenshot_safe(page)
-                self._last_screenshot_b64 = screenshot
-
-                # Получаем основную информацию о странице
-                page_info = self._extract_page_info(page)
-
-                self.history.append({"url": page.url, "status": 200, "time": time.time()})
-
-                return {
-                    "success": True,
-                    "url": page.url,
-                    "title": title,
-                    "status_code": 200,
-                    "page_info": page_info,
-                    "screenshot": screenshot
-                }
+            result = _pw_navigate(url)
+            if result is None:
+                logger.warning(f"[PW] navigate: failed, falling back to requests for {url}")
+                return self._navigate_requests(url)
+            self._current_url = result.get("url", url)
+            self._last_screenshot_b64 = result.get("screenshot")
+            self.history.append({"url": result.get("url", url), "status": 200, "time": time.time()})
+            return result
         except Exception as e:
             return {"success": False, "url": url, "error": str(e)}
 
