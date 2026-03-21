@@ -22,7 +22,7 @@ from shared import (
     OPENROUTER_API_KEY, OPENROUTER_BASE_URL, DATA_DIR, UPLOAD_DIR,
     _lock, _USE_SQLITE,
     CHAT_MODELS, MODEL_CONFIGS,
-    _message_queue,
+    _message_queue, _paused_tasks,
 )
 
 from agent_loop import AgentLoop, MultiAgentLoop
