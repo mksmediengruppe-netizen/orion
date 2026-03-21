@@ -431,7 +431,8 @@ def send_message(chat_id):
     user_message = data.get("message", "").strip()
     file_content = data.get("file_content", "")
     # ── BUG-1 FIX: Extract and normalize orion_mode ──
-    _raw_mode = data.get("mode", "turbo-basic")
+    # FIX: Load mode from chat if not in send payload
+    _raw_mode = data.get("mode") or (chat.get("orion_mode") if chat else None) or "turbo-basic"
     _MODE_NORMALIZE = {
         "auto": "auto", 
         "turbo-basic": "turbo_standard", "turbo_basic": "turbo_standard", "turbo_standard": "turbo_standard",
@@ -1813,7 +1814,8 @@ def direct_chat():
     user_message = data.get("message", "").strip()
     file_content = data.get("file_content", "")
     # ── BUG-1 FIX: Extract and normalize orion_mode ──
-    _raw_mode = data.get("mode", "turbo-basic")
+    # FIX: Load mode from chat if not in send payload
+    _raw_mode = data.get("mode") or (chat.get("orion_mode") if chat else None) or "turbo-basic"
     _MODE_NORMALIZE = {
         "auto": "auto", 
         "turbo-basic": "turbo_standard", "turbo_basic": "turbo_standard", "turbo_standard": "turbo_standard",
