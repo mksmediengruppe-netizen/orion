@@ -60,6 +60,7 @@ from artifact_handoff import ArtifactHandoff, get_handoff_store
 from amendment_extractor import AmendmentExtractor, get_amendment_extractor
 from crash_recovery import CrashRecovery, get_crash_recovery
 from runtime_state import RuntimeStateStore, get_runtime_state
+from langgraph_persistence import LanggraphStatePersistence, get_langgraph_persistence
 from final_judge import FinalJudge, get_final_judge, VERDICT_PASS, VERDICT_PARTIAL, VERDICT_FAIL
 from tool_sandbox import ToolSandbox, get_tool_sandbox, TOOL_PERMISSIONS
 from task_scorecard import TaskScorecard, get_scorecard_store
@@ -366,7 +367,7 @@ class AgentLoop:
 
         # LangGraph checkpointer
         self._checkpoint_conn = sqlite3.connect(
-            "/tmp/agent_checkpoints.db", check_same_thread=False
+            os.environ.get("ORION_DB_PATH", "/var/www/orion/data/database.sqlite"), check_same_thread=False
         )
         self._checkpointer = SqliteSaver(self._checkpoint_conn)
 
@@ -3644,6 +3645,17 @@ ReactDOM.createRoot(document.getElementById('root')).render(<App />);
                 logger.debug(f"[Checkpoint] Clear error: {_cp_clr_err}")
 
         # ── CHECKPOINT: resume if previous run was interrupted ────────────────────────────────────────────────────
+        # ── TASK 13: Try to load langgraph state for resume ──
+        _lg_saved_state = None
+        try:
+            _lg_saved_state = self._lg_persistence.load_state(
+                chat_id=str(getattr(self, '_chat_id', '')),
+                thread_id=str(getattr(self, '_current_task_id', ''))
+            )
+            if _lg_saved_state:
+                logger.info(f"[TASK13] Found saved langgraph state: iter={_lg_saved_state.get('iteration', 0)}")
+        except Exception as _lg_err:
+            logger.debug(f"[TASK13] No langgraph state to restore: {_lg_err}")
         _prev_checkpoint = _load_checkpoint()
         if _prev_checkpoint:
             try:
@@ -4169,6 +4181,14 @@ ReactDOM.createRoot(document.getElementById('root')).render(<App />);
                             logger.warning(f"Memory after_chat (task_complete) failed: {_mem_tc_err}")
                     # ── PATCH 3: Clear checkpoint on successful completion ──
                     _clear_checkpoint()
+                    # ── TASK 13: Clean up langgraph state on completion ──
+                    try:
+                        self._lg_persistence.delete_state(
+                            chat_id=str(getattr(self, '_chat_id', '')),
+                            thread_id=str(getattr(self, '_current_task_id', ''))
+                        )
+                    except Exception:
+                        pass
                     # ── TASK 12: Complete persistent runtime state ──
                     try:
                         self._runtime_state.complete_task(str(getattr(self, '_chat_id', '')))
@@ -4418,6 +4438,20 @@ ReactDOM.createRoot(document.getElementById('root')).render(<App />);
                             last_tool=tool_name,
                             task_cost=_task_cost
                         )
+                    except Exception:
+                        pass
+                    # ── TASK 13: Save langgraph state to SQLite ──
+                    try:
+                        if iteration % 3 == 0 or tool_name == 'task_complete':  # Save every 3rd iteration + on complete
+                            _lg_thread = f"{_chat_id_cp}_{int(time.time())}"
+                            self._lg_persistence.save_state(
+                                chat_id=str(getattr(self, '_chat_id', '')),
+                                thread_id=str(getattr(self, '_current_task_id', _lg_thread)),
+                                messages=messages[-20:],
+                                metadata={"iteration": iteration, "tool": tool_name, "cost": _task_cost},
+                                iteration=iteration,
+                                tool_history=[h for h in list(_tool_call_history.keys())[-10:]]
+                            )
                     except Exception:
                         pass
                     # ── TASK 12: Register task in persistent runtime state ──
