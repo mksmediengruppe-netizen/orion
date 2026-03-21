@@ -18,6 +18,7 @@ from agent_routes import agent_bp
 from task_routes import task_bp
 from canvas_routes import canvas_bp
 from misc_routes import misc_bp
+from dashboard_routes import dashboard_bp
 
 # Register blueprints
 app.register_blueprint(auth_bp)
@@ -28,6 +29,7 @@ app.register_blueprint(agent_bp)
 app.register_blueprint(task_bp)
 app.register_blueprint(canvas_bp)
 app.register_blueprint(misc_bp)
+app.register_blueprint(dashboard_bp)
 
 
 # ── TASK 10: Start crash recovery watchdog ──
