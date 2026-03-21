@@ -439,7 +439,8 @@ def send_message(chat_id):
         "pro-basic": "pro_standard", "pro_basic": "pro_standard", "pro_standard": "pro_standard",
         "pro-premium": "pro_premium", "pro_premium": "pro_premium",
         "architect": "architect",
-    }
+        "smart_turbo": "smart_turbo",
+}
     orion_mode = _MODE_NORMALIZE.get(_raw_mode, "turbo_standard")
     
     # ══ PATCH 14 FIX: Interrupt / Queue / Append for send_message route ══
@@ -620,6 +621,7 @@ def send_message(chat_id):
             "pro_standard":   (_MR_MODELS["sonnet"]["id"], _MR_MODELS["sonnet"]["name"]),
             "pro_premium":    (_MR_MODELS["sonnet"]["id"], _MR_MODELS["sonnet"]["name"]),
             "architect":      (_MR_MODELS["opus"]["id"], _MR_MODELS["opus"]["name"]),
+            "smart_turbo":    ("minimax/minimax-m2.5", "MiniMax M2.5"),
         }
         if orion_mode in _mode_to_model:
             agent_model, agent_model_name = _mode_to_model[orion_mode]
