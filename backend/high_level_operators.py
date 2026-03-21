@@ -347,53 +347,98 @@ class HighLevelOperators:
     # ═══════════════════════════════════════════
     # OPERATOR: check_site_health
     # ═══════════════════════════════════════════
-    def check_site_health(self, url: str) -> OperatorResult:
-        """Check website health."""
+    def check_site_health(self, url: str, checks: list = None) -> OperatorResult:
+        """
+        Полная проверка сайта. MiMo вызывает, LLM не нужен.
+        Делегирует в site_health_tester.check_site_health().
+        
+        Проверяет:
+        1.  HTTP status (200?)
+        2.  Скриншот десктоп 1920px
+        3.  Скриншот мобильный 375px
+        4.  Все ссылки на странице (клик -> не 404?)
+        5.  Все формы (заполнить -> отправить -> ответ?)
+        6.  Навигация (клик каждый пункт -> скролл?)
+        7.  Мета-теги (title, description, og:image)
+        8.  Время загрузки (<3 сек?)
+        9.  AOS анимации (data-aos атрибуты?)
+        10. Favicon есть?
+        
+        Returns OperatorResult with metadata containing full report.
+        """
         start = time.time()
-        steps = []
-        errors = []
-        metadata = {"url": url}
+        
+        try:
+            from site_health_tester import check_site_health as _check, format_report_text
+            
+            report = _check(
+                url=url,
+                checks=checks,
+                ssh_func=self._ssh,
+                take_screenshots=True
+            )
+            
+            steps = [
+                {"step": "http_check", "status": "done", "code": report.get("status")},
+                {"step": "performance", "status": "done", "time_ms": report.get("performance", {}).get("load_time_ms")},
+                {"step": "links_check", "status": "done", "total": report.get("links", {}).get("total", 0), "broken": report.get("links", {}).get("broken", 0)},
+                {"step": "forms_check", "status": "done", "total": report.get("forms", {}).get("total", 0)},
+                {"step": "navigation_check", "status": "done", "nav_elements": report.get("navigation", {}).get("nav_elements", 0)},
+                {"step": "meta_check", "status": "done", "has_title": bool(report.get("meta", {}).get("title"))},
+                {"step": "aos_check", "status": "done", "aos_elements": report.get("aos", {}).get("aos_elements", 0)},
+                {"step": "favicon_check", "status": "done", "has_favicon": report.get("favicon", {}).get("has_favicon", False)},
+                {"step": "screenshots", "status": "done" if report.get("screenshots", {}).get("desktop") else "skipped"},
+            ]
+            
+            artifacts = []
+            if report.get("screenshots", {}).get("desktop"):
+                artifacts.append(report["screenshots"]["desktop"])
+            if report.get("screenshots", {}).get("mobile"):
+                artifacts.append(report["screenshots"]["mobile"])
+            
+            # Generate text report for FinalJudge
+            text_report = format_report_text(report)
+            
+            duration = time.time() - start
+            result = OperatorResult(
+                success=report.get("score", 0) >= 5,
+                operator="check_site_health",
+                steps=steps,
+                artifacts=artifacts,
+                errors=report.get("issues", []),
+                duration=duration,
+                metadata={
+                    "url": url,
+                    "score": report.get("score", 0),
+                    "status_code": report.get("status", 0),
+                    "load_time_ms": report.get("performance", {}).get("load_time_ms", 0),
+                    "links_total": report.get("links", {}).get("total", 0),
+                    "links_broken": report.get("links", {}).get("broken", 0),
+                    "forms_total": report.get("forms", {}).get("total", 0),
+                    "has_favicon": report.get("favicon", {}).get("has_favicon", False),
+                    "has_aos": report.get("aos", {}).get("has_aos", False),
+                    "issues_count": len(report.get("issues", [])),
+                    "text_report": text_report,
+                    "full_report": report
+                }
+            )
+            self._history.append(result.to_dict())
+            return result
+            
+        except Exception as e:
+            duration = time.time() - start
+            result = OperatorResult(
+                success=False,
+                operator="check_site_health",
+                steps=[{"step": "error", "status": "failed", "error": str(e)}],
+                errors=[str(e)],
+                duration=duration,
+                metadata={"url": url}
+            )
+            self._history.append(result.to_dict())
+            return result
 
-        steps.append({"step": "http_check", "url": url, "status": "planned"})
-        steps.append({"step": "response_time", "status": "planned"})
-        steps.append({"step": "content_check", "status": "planned"})
-
-        if self._ssh:
-            try:
-                out, err, code = self._ssh(
-                    f"curl -sL -o /dev/null -w '%{{http_code}} %{{time_total}}' {url}"
-                )
-                parts = out.strip().split()
-                if len(parts) >= 2:
-                    metadata["status_code"] = int(parts[0])
-                    metadata["response_time"] = float(parts[1])
-                    steps[0]["status"] = "done"
-                    steps[1]["status"] = "done"
-                    steps[1]["time_seconds"] = float(parts[1])
-                
-                # Content check
-                out2, _, _ = self._ssh(f"curl -sL {url} | head -20")
-                metadata["has_content"] = len(out2.strip()) > 0
-                steps[2]["status"] = "done"
-            except Exception as e:
-                errors.append(str(e))
-        else:
-            for s in steps:
-                s["status"] = "dry_run"
-
-        duration = time.time() - start
-        result = OperatorResult(
-            success=len(errors) == 0,
-            operator="check_site_health",
-            steps=steps,
-            errors=errors,
-            duration=duration,
-            metadata=metadata
-        )
-        self._history.append(result.to_dict())
-        return result
-
-    # ═══════════════════════════════════════════
+        # ═══════════════════════════════════════════
     # OPERATOR: backup_files
     # ═══════════════════════════════════════════
     def backup_files(self, source_path: str,
