@@ -171,6 +171,17 @@ class ToolSandbox:
             f"allows={len(self._explicit_allows)}, denies={len(self._explicit_denies)}"
         )
 
+    def check_with_args(self, tool_name: str, args: dict = None) -> Dict:
+        """Check tool + argument-level policies."""
+        result = self.check(tool_name)
+        if not result.get("allowed", False):
+            return result
+        if args:
+            arg_result = validate_arguments(tool_name, args)
+            if not arg_result.get("allowed", True):
+                return arg_result
+        return result
+
     def check(self, tool_name: str) -> Dict:
         """
         Проверить доступность инструмента.
@@ -316,3 +327,177 @@ def get_tool_sandbox() -> ToolSandbox:
         _tool_sandbox = ToolSandbox()
         _tool_sandbox.configure()  # Defaults
     return _tool_sandbox
+
+
+# ═══════════════════════════════════════════
+# ARGUMENT-LEVEL POLICIES (TASK 11)
+# ═══════════════════════════════════════════
+# Rules that validate specific arguments of tools before execution.
+# Each rule: {"tool": str, "arg": str, "policy": "deny_pattern"|"allow_pattern"|"max_length"|"require", "value": ...}
+
+ARGUMENT_POLICIES = [
+    # SSH: block dangerous commands
+    {
+        "tool": "ssh_execute",
+        "arg": "command",
+        "policy": "deny_pattern",
+        "patterns": [
+            r"rm\s+-rf\s+/(?!tmp|var/www)",   # rm -rf / (except /tmp, /var/www)
+            r"mkfs\.",                            # format disk
+            r"dd\s+if=.*of=/dev/",               # overwrite disk
+            r":(){ :|:& };:",                      # fork bomb
+            r"chmod\s+-R\s+777\s+/",            # chmod 777 /
+            r"shutdown|reboot|poweroff|halt",      # system shutdown
+            r"iptables\s+-F",                     # flush firewall
+            r"passwd\s+root",                     # change root password
+            r"userdel\s+root",                    # delete root
+        ],
+        "reason": "Dangerous system command blocked by policy"
+    },
+    # SSH: max command length
+    {
+        "tool": "ssh_execute",
+        "arg": "command",
+        "policy": "max_length",
+        "value": 10000,
+        "reason": "SSH command too long (max 10000 chars)"
+    },
+    # File write: block writing to system directories
+    {
+        "tool": "file_write",
+        "arg": "path",
+        "policy": "deny_pattern",
+        "patterns": [
+            r"^/etc/",           # system config
+            r"^/usr/",           # system binaries
+            r"^/boot/",          # boot partition
+            r"^/proc/",          # proc filesystem
+            r"^/sys/",           # sys filesystem
+            r"\.env$",          # .env files (secrets)
+            r"id_rsa|id_ed25519", # SSH keys
+        ],
+        "reason": "Writing to protected path blocked by policy"
+    },
+    # File write: max content length (5MB)
+    {
+        "tool": "file_write",
+        "arg": "content",
+        "policy": "max_length",
+        "value": 5_000_000,
+        "reason": "File content too large (max 5MB)"
+    },
+    # Browser JS: block dangerous JavaScript
+    {
+        "tool": "browser_js",
+        "arg": "code",
+        "policy": "deny_pattern",
+        "patterns": [
+            r"document\.cookie",                  # cookie theft
+            r"localStorage\.getItem.*token",      # token theft
+            r"eval\(",                             # eval injection
+            r"window\.location\s*=.*http",        # redirect
+            r"fetch\(.*\.onion",                  # tor access
+        ],
+        "reason": "Dangerous JavaScript blocked by policy"
+    },
+    # Python exec: block dangerous imports
+    {
+        "tool": "python_exec",
+        "arg": "code",
+        "policy": "deny_pattern",
+        "patterns": [
+            r"import\s+subprocess",               # subprocess
+            r"os\.system\(",                      # os.system
+            r"os\.popen\(",                       # os.popen
+            r"__import__\(",                       # dynamic import
+            r"exec\(.*input",                      # exec user input
+        ],
+        "reason": "Dangerous Python code blocked by policy"
+    },
+    # Browser navigate: block dangerous URLs
+    {
+        "tool": "browser_navigate",
+        "arg": "url",
+        "policy": "deny_pattern",
+        "patterns": [
+            r"\.onion",                            # tor
+            r"file:///etc/",                        # local file access
+            r"javascript:",                         # javascript: protocol
+            r"data:text/html",                      # data: XSS
+        ],
+        "reason": "Dangerous URL blocked by policy"
+    },
+]
+
+import re
+
+def validate_arguments(tool_name: str, args: dict) -> dict:
+    """
+    Validate tool arguments against policies.
+    
+    Returns:
+        {"allowed": True} or {"allowed": False, "reason": "...", "policy": "...", "arg": "..."}
+    """
+    for policy in ARGUMENT_POLICIES:
+        if policy["tool"] != tool_name:
+            continue
+        
+        arg_name = policy["arg"]
+        arg_value = args.get(arg_name, "")
+        if not isinstance(arg_value, str):
+            arg_value = str(arg_value)
+        
+        if policy["policy"] == "deny_pattern":
+            for pattern in policy.get("patterns", []):
+                try:
+                    if re.search(pattern, arg_value, re.IGNORECASE):
+                        logger.warning(
+                            f"[POLICY] Blocked {tool_name}.{arg_name}: "
+                            f"matched deny pattern '{pattern}'"
+                        )
+                        return {
+                            "allowed": False,
+                            "reason": policy.get("reason", f"Argument blocked by pattern: {pattern}"),
+                            "policy": "deny_pattern",
+                            "arg": arg_name,
+                            "pattern": pattern
+                        }
+                except re.error:
+                    pass
+        
+        elif policy["policy"] == "max_length":
+            max_len = policy.get("value", 10000)
+            if len(arg_value) > max_len:
+                logger.warning(
+                    f"[POLICY] Blocked {tool_name}.{arg_name}: "
+                    f"length {len(arg_value)} > max {max_len}"
+                )
+                return {
+                    "allowed": False,
+                    "reason": policy.get("reason", f"Argument too long: {len(arg_value)} > {max_len}"),
+                    "policy": "max_length",
+                    "arg": arg_name
+                }
+        
+        elif policy["policy"] == "require":
+            if not arg_value or not arg_value.strip():
+                return {
+                    "allowed": False,
+                    "reason": policy.get("reason", f"Required argument missing: {arg_name}"),
+                    "policy": "require",
+                    "arg": arg_name
+                }
+        
+        elif policy["policy"] == "allow_pattern":
+            patterns = policy.get("patterns", [])
+            if patterns:
+                matched = any(re.search(p, arg_value) for p in patterns)
+                if not matched:
+                    return {
+                        "allowed": False,
+                        "reason": policy.get("reason", f"Argument doesn't match allowed patterns"),
+                        "policy": "allow_pattern",
+                        "arg": arg_name
+                    }
+    
+    return {"allowed": True}

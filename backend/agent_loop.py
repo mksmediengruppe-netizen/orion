@@ -979,7 +979,7 @@ class AgentLoop:
         # ═══ BLOCK 4: ToolSandbox check ═══
         if hasattr(self, '_tool_sandbox') and self._tool_sandbox:
             try:
-                _sb_check = self._tool_sandbox.check(tool_name)
+                _sb_check = self._tool_sandbox.check_with_args(tool_name, tool_args)
                 if not _sb_check["allowed"]:
                     logger.warning(f"[BLOCK4] Tool blocked by sandbox: {tool_name} — {_sb_check['reason']}")
                     return {"success": False, "error": f"Tool blocked: {_sb_check['reason']}"}
