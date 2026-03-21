@@ -5189,7 +5189,10 @@ ReactDOM.createRoot(document.getElementById('root')).render(<App />);
                                 files_created=[],
                             )
                             _fj_v = _fj_verdict.get("verdict", "")
-                            _fj_s = _fj_verdict.get("score", 0)
+                            _fj_s = float(_fj_verdict.get("score", 0))
+                            # Store on self so scorecard.finish can access them reliably
+                            self._last_fj_verdict = _fj_v
+                            self._last_fj_score = _fj_s
                             logger.info(f"[BLOCK4] FinalJudge: {_fj_v} score={_fj_s}")
                             yield self._sse({
                                 "type": "final_judge",
@@ -5204,8 +5207,9 @@ ReactDOM.createRoot(document.getElementById('root')).render(<App />);
                         try:
                             _sc_task_id = getattr(self, '_current_task_id', None)
                             if _sc_task_id:
-                                _fj_v = locals().get('_fj_v', '')
-                                _fj_s = locals().get('_fj_s', 0)
+                                # Use instance vars set by FinalJudge (locals() unreliable in generators)
+                                _fj_v = getattr(self, '_last_fj_verdict', '')
+                                _fj_s = getattr(self, '_last_fj_score', 0.0)
                                 self._scorecard_store.finish(
                                     task_id=_sc_task_id,
                                     verdict=_fj_v,

@@ -80,7 +80,7 @@ def _run_in_pw_thread(fn, *args, **kwargs):
     """Run a function in the dedicated Playwright thread (no asyncio loop)."""
     try:
         future = _pw_thread_pool.submit(fn, *args, **kwargs)
-        return future.result(timeout=60)
+        return future.result(timeout=120)
     except concurrent.futures.TimeoutError:
         logger.error("[PW] Playwright operation timed out (60s)")
         return None
