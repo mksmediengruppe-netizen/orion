@@ -589,7 +589,7 @@ const Pipeline = {
       if (i > 0) inner.appendChild(el('span', 'ph-arrow', '›'));
       const item = el('div', 'ph ph-pending');
       item.id = 'ph-' + i;
-      item.textContent = ph;
+      item.textContent = typeof ph === 'string' ? ph : (ph.name || ph.title || ph.description || JSON.stringify(ph));
       inner.appendChild(item);
     });
     el2.classList.remove('hidden'); el2.classList.add('visible');
@@ -710,7 +710,8 @@ const SSE = {
       // ── Task steps / phases ──
       case 'task_steps':
       case 'plan': {
-        const steps = data.steps || data.phases || data.plan || [];
+        const rawSteps = data.steps || data.phases || data.plan || [];
+        const steps = rawSteps.map(s => typeof s === 'string' ? s : (s.name || s.title || s.description || JSON.stringify(s)));
         if (steps.length) {
           Pipeline.show(steps);
           steps.forEach(s => Activity.addPhase(s, 'pending'));
