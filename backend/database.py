@@ -168,23 +168,29 @@ def init_db():
         );
 
         CREATE TABLE IF NOT EXISTS task_scorecards (
-            task_id TEXT PRIMARY KEY,
-            chat_id TEXT DEFAULT '',
-            user_id TEXT DEFAULT '',
-            orion_mode TEXT DEFAULT 'default',
-            objective TEXT DEFAULT '',
-            status TEXT DEFAULT 'running',
-            started_at REAL,
-            finished_at REAL,
-            duration_seconds REAL DEFAULT 0.0,
+            task_id          TEXT PRIMARY KEY,
+            chat_id          TEXT DEFAULT '',
+            user_id          TEXT DEFAULT '',
+            orion_mode       TEXT DEFAULT 'default',
+            started_at       REAL,
+            finished_at      REAL,
+            duration_seconds REAL DEFAULT 0,
             total_iterations INTEGER DEFAULT 0,
-            total_tokens INTEGER DEFAULT 0,
-            total_cost REAL DEFAULT 0.0,
-            tool_calls_json TEXT DEFAULT '{}',
-            errors_json TEXT DEFAULT '[]',
-            final_verdict TEXT DEFAULT '',
-            final_score REAL DEFAULT 0.0,
-            quality_notes TEXT DEFAULT ''
+            max_iterations   INTEGER DEFAULT 0,
+            total_cost_usd   REAL DEFAULT 0.0,
+            input_tokens     INTEGER DEFAULT 0,
+            output_tokens    INTEGER DEFAULT 0,
+            tool_calls_json  TEXT DEFAULT '{}',
+            total_tool_calls INTEGER DEFAULT 0,
+            error_count      INTEGER DEFAULT 0,
+            errors_json      TEXT DEFAULT '[]',
+            objective        TEXT DEFAULT '',
+            status           TEXT DEFAULT 'running',
+            final_verdict    TEXT DEFAULT '',
+            final_score      REAL DEFAULT 0.0,
+            quality_notes    TEXT DEFAULT '',
+            created_at       REAL,
+            updated_at       REAL
         );
 
         CREATE TABLE IF NOT EXISTS artifact_handoffs (
