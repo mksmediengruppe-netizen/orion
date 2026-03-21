@@ -49,7 +49,7 @@ class TestTaskCharter(unittest.TestCase):
 
     def test_01_create_charter(self):
         """Создание charter"""
-        charter = self.store.create("test-task-1", "Тестовая задача", "chat-1")
+        charter = self.store.create("test-task-1", "chat-1", "Тестовая задача")
         self.assertIsNotNone(charter)
         self.assertEqual(charter["task_id"], "test-task-1")
         self.assertEqual(charter["status"], "active")
@@ -73,7 +73,7 @@ class TestTaskCharter(unittest.TestCase):
 
     def test_05_update_charter(self):
         """Обновление charter"""
-        self.store.create("test-task-2", "Задача 2", "chat-2")
+        self.store.create("test-task-2", "chat-2", "Задача 2")
         result = self.store.update("test-task-2", {"current_objective": "Обновлённая задача"})
         self.assertIsNotNone(result)
         charter = self.store.get("test-task-2")
