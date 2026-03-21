@@ -345,7 +345,8 @@ def load_db():
             "variant": row["variant"],
             "total_cost": row["total_cost"],
             "pinned": bool(row["pinned"]),
-            "archived": bool(row["archived"])
+            "archived": bool(row["archived"]),
+            "orion_mode": row["orion_mode"] if "orion_mode" in row.keys() else "turbo-basic"
         }
     db["chats"] = chats
 
@@ -443,15 +444,16 @@ def save_db(db):
                 if isinstance(chat, dict):
                     conn.execute(
                         """INSERT OR REPLACE INTO chats
-                        (id, user_id, title, messages, created_at, updated_at, model, variant, total_cost, pinned, archived)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (id, user_id, title, messages, created_at, updated_at, model, variant, total_cost, pinned, archived, orion_mode)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                         (cid, chat.get("user_id", "admin"), chat.get("title", "Chat"),
                          json.dumps(chat.get("messages", []), ensure_ascii=False),
                          chat.get("created_at", now), chat.get("updated_at", now),
                          chat.get("model", ""), chat.get("variant", "premium"),
                          chat.get("total_cost", 0.0),
                          1 if chat.get("pinned") else 0,
-                         1 if chat.get("archived") else 0)
+                         1 if chat.get("archived") else 0,
+                         chat.get("orion_mode", "turbo-basic"))
                     )
 
             # Sessions
