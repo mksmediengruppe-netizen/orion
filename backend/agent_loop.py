@@ -59,6 +59,7 @@ _goal_keeper = GoalKeeper()
 from artifact_handoff import ArtifactHandoff, get_handoff_store
 from amendment_extractor import AmendmentExtractor, get_amendment_extractor
 from crash_recovery import CrashRecovery, get_crash_recovery
+from runtime_state import RuntimeStateStore, get_runtime_state
 from final_judge import FinalJudge, get_final_judge, VERDICT_PASS, VERDICT_PARTIAL, VERDICT_FAIL
 from tool_sandbox import ToolSandbox, get_tool_sandbox, TOOL_PERMISSIONS
 from task_scorecard import TaskScorecard, get_scorecard_store
@@ -4168,6 +4169,11 @@ ReactDOM.createRoot(document.getElementById('root')).render(<App />);
                             logger.warning(f"Memory after_chat (task_complete) failed: {_mem_tc_err}")
                     # ── PATCH 3: Clear checkpoint on successful completion ──
                     _clear_checkpoint()
+                    # ── TASK 12: Complete persistent runtime state ──
+                    try:
+                        self._runtime_state.complete_task(str(getattr(self, '_chat_id', '')))
+                    except Exception:
+                        pass
                     # ── TASK 10: Complete checkpoint on success ──
                     try:
                         self._crash_recovery.complete_checkpoint(str(getattr(self, '_chat_id', '')))
@@ -4404,6 +4410,26 @@ ReactDOM.createRoot(document.getElementById('root')).render(<App />);
                     self._crash_recovery.heartbeat(str(getattr(self, '_chat_id', '')))
                 except Exception:
                     pass
+                    # ── TASK 12: Update persistent runtime state ──
+                    try:
+                        self._runtime_state.update_task(
+                            chat_id=str(getattr(self, '_chat_id', '')),
+                            iteration=iteration,
+                            last_tool=tool_name,
+                            task_cost=_task_cost
+                        )
+                    except Exception:
+                        pass
+                    # ── TASK 12: Register task in persistent runtime state ──
+                    try:
+                        self._runtime_state.register_task(
+                            chat_id=str(getattr(self, '_chat_id', '')),
+                            task_id=str(getattr(self, '_current_task_id', '')),
+                            orion_mode=str(getattr(self, 'mode', 'turbo')),
+                            user_message=user_message[:500] if user_message else ''
+                        )
+                    except Exception:
+                        pass
                     # ── TASK 10: Persistent checkpoint in SQLite ──
                     try:
                         self._crash_recovery.save_checkpoint(
