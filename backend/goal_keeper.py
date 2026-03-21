@@ -407,6 +407,71 @@ class GoalKeeper:
     # INTERNAL
     # ═══════════════════════════════════════════
 
+
+    # ═══════════════════════════════════════════
+    # SEMANTIC ALIGNMENT CHECK (LLM-based)
+    # ═══════════════════════════════════════════
+    def _check_alignment(self, tool: str, args: Dict,
+                          charter: Dict) -> Dict:
+        """
+        Semantic check: does this action align with the task goal?
+        Uses LLM for privileged/guarded actions only.
+        Falls back to rule-based if no LLM available.
+        """
+        risk = TOOL_RISK_LEVELS.get(tool, "guarded")
+        
+        # Only check privileged and guarded actions
+        if risk == "safe":
+            return {"aligned": True, "warnings": []}
+        
+        # If no LLM function — skip semantic check
+        if not self._call_ai:
+            return {"aligned": True, "warnings": []}
+        
+        objective = charter.get("primary_objective", charter.get("objective", ""))
+        constraints = charter.get("constraints", [])
+        
+        if not objective:
+            return {"aligned": True, "warnings": []}
+        
+        # Build compact prompt for fast LLM check
+        args_preview = str(args)[:300]
+        prompt = (
+            f"Task objective: {objective}\n"
+            f"Constraints: {', '.join(constraints[:5]) if constraints else 'none'}\n"
+            f"Proposed action: {tool}({args_preview})\n\n"
+            f"Does this action align with the task objective? "
+            f"Reply ONLY with JSON: "
+            f'{{"aligned": true/false, "reason": "brief explanation"}}'
+        )
+        
+        try:
+            response = self._call_ai([
+                {"role": "system", "content": "You are a goal alignment checker. Reply ONLY with valid JSON."},
+                {"role": "user", "content": prompt}
+            ])
+            
+            # Parse response
+            if isinstance(response, str):
+                # Try to extract JSON from response
+                import re as _re
+                json_match = _re.search(r'\{[^}]+\}', response)
+                if json_match:
+                    result = json.loads(json_match.group())
+                    if not result.get("aligned", True):
+                        logger.warning(f"[GK] Alignment FAIL for {tool}: {result.get('reason', '?')}")
+                        return {
+                            "aligned": False,
+                            "warnings": [f"Goal misalignment: {result.get('reason', 'action does not align with objective')}"]
+                        }
+                    return {"aligned": True, "warnings": []}
+            
+            return {"aligned": True, "warnings": []}
+            
+        except Exception as e:
+            logger.debug(f"[GK] Alignment check failed (non-critical): {e}")
+            return {"aligned": True, "warnings": []}
+
     def _log_check(self, tool: str, status: str, detail: str):
         """Логировать проверку."""
         self._action_log.append({

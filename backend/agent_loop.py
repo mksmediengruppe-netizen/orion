@@ -1498,6 +1498,7 @@ class AgentLoop:
         self._charter_store = _charter_store
         self._snapshot_store = _snapshot_store
         self._goal_keeper = _goal_keeper
+        self._goal_keeper._call_ai = self._call_ai_simple  # TASK 6: enable semantic alignment check
         # ═══ BLOCK 4: Artifact Handoff + Final Judge + Tool Sandbox + Scorecard + Autonomy ═══
         self._handoff_store = _handoff_store
         self._scorecard_store = _scorecard_store
