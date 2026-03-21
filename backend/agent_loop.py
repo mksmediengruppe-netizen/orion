@@ -3236,6 +3236,21 @@ ReactDOM.createRoot(document.getElementById('root')).render(<App />);
                     logger.info(f"[BLOCK3] Crash recovery injected for {_b3_charter['task_id']}")
 
         # ── ORION: Intent Clarifier ───────────────────────────────
+
+        # ── TASK 8: Load previous artifacts for multi-phase context ──
+        try:
+            _prev_artifacts = self._handoff_store.get_all_for_task(str(getattr(self, '_current_task_id', '')))
+            if _prev_artifacts:
+                _artifact_ctx = "\n".join([
+                    f"[Previous: {a.get('from_agent','?')}] {str(a.get('payload',{}).get('summary',''))[:300]}"
+                    for a in _prev_artifacts[-3:]
+                ])
+                if _artifact_ctx.strip():
+                    chat_history.insert(0, {"role": "system", "content": f"Context from previous phases:\n{_artifact_ctx}"})
+                    logger.info(f"[HANDOFF] Loaded {len(_prev_artifacts)} previous artifacts as context")
+        except Exception as _load_err:
+            logger.debug(f"[HANDOFF] Load artifacts failed: {_load_err}")
+
         # ═══ BLOCK 4: TaskScorecard — start tracking ═══
         if hasattr(self, '_scorecard_store') and self._scorecard_store:
             try:
@@ -4081,6 +4096,27 @@ ReactDOM.createRoot(document.getElementById('root')).render(<App />);
                                 )
                         except Exception as _sc_fin_err:
                             logger.debug(f"[BLOCK4] Scorecard finish error: {_sc_fin_err}")
+
+                    # ── TASK 8: Save phase artifacts via ArtifactHandoff ──
+                    try:
+                        _phase_artifacts = {
+                            "summary": summary[:1000] if summary else "",
+                            "tools_used": list(set(getattr(self, '_tools_used_this_run', [])))[:20],
+                            "iterations": iteration,
+                        }
+                        self._handoff_store.save(
+                            task_id=str(getattr(self, '_current_task_id', '')),
+                            chat_id=str(getattr(self, 'chat_id', '')),
+                            from_agent=getattr(self, '_current_agent', 'developer'),
+                            to_agent="next",
+                            artifact_type="task_complete",
+                            payload=_phase_artifacts,
+                            metadata={"orion_mode": getattr(self, 'orion_mode', 'default')}
+                        )
+                        logger.info(f"[HANDOFF] Saved task artifacts: {len(str(_phase_artifacts))} chars")
+                    except Exception as _hoff_err:
+                        logger.debug(f"[HANDOFF] Save failed (non-critical): {_hoff_err}")
+
                     # ── ПАТЧ 9: Solution Cache — сохранить решение ──
                     try:
                         if not self._solution_cache:
