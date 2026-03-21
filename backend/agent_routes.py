@@ -29,6 +29,7 @@ from agent_loop import AgentLoop, MultiAgentLoop
 from ssh_executor import SSHExecutor, ssh_pool
 from browser_agent import BrowserAgent
 from shared import _classify_interrupt_message, _cleanup_running_task
+from amendment_extractor import get_amendment_extractor
 import requests as http_requests
 import copy
 import secrets
@@ -447,6 +448,15 @@ def send_message(chat_id):
         _task_is_running = _existing_task and _existing_task.get("status") == "running"
     if _task_is_running:
         _msg_type = _classify_interrupt_message(user_message)
+            # ── TASK 9: Detect amendments in interrupt messages ──
+            try:
+                _amend_ext = get_amendment_extractor()
+                _amend_result = _amend_ext.classify(user_message)
+                if _amend_result.get("type") == "amendment":
+                    logging.info(f"[AMENDMENT] Detected in interrupt: {_amend_result.get('amendment', {}).get('summary', '')[:100]}")
+            except Exception as _amend_err:
+                logging.debug(f"[AMENDMENT] Detection error: {_amend_err}")
+
         if _msg_type == "queue":
             with _interrupt_lock:
                 if chat_id not in _message_queue:
