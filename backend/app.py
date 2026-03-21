@@ -2928,6 +2928,72 @@ def direct_chat():
             _orch_model_override = None
             _orch_prompt_extra = ""
             _orch_plan = None
+            multi_agent = False
+            
+            # ── QUICK PATH: skip orchestrator for short simple messages ──
+            _quick_kw_skip = [
+                "сделай", "создай", "напиши", "настрой", "задеплой",
+                "подключи", "перенеси", "протестируй", "проанализируй",
+                "сгенерируй", "нарисуй", "спроектируй", "разверни",
+                "установи", "обнови", "удали", "скачай", "загрузи",
+                "http://", "https://", "ssh", "docker", "nginx",
+                "выполни", "найди", "проверь", "сервер", "код", "файл",
+                "лендинг", "сайт", "парсер", "бот", "скрипт", "api",
+                "база", "домен", "скриншот", "screenshot", "браузер",
+            ]
+            _is_quick_direct = (
+                len(user_message) < 50 and
+                not any(w in user_message.lower() for w in _quick_kw_skip) and
+                orion_mode not in ("pro_standard", "pro_premium", "architect")
+            )
+            
+            if _is_quick_direct:
+                # Fast path: use simple chat model directly
+                import requests as _rq_quick
+                _quick_model = "minimax/minimax-m2.5"
+                _quick_system = "Ты — полезный AI-ассистент ORION Digital. Отвечай на русском языке кратко и по делу."
+                _quick_msgs = [{"role": "system", "content": _quick_system}]
+                for _hm in history[-6:]:
+                    _quick_msgs.append({"role": _hm["role"], "content": _hm["content"][:500]})
+                _quick_resp = _rq_quick.post(
+                    OPENROUTER_BASE_URL,
+                    headers={"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"},
+                    json={"model": _quick_model, "messages": _quick_msgs, "temperature": 0.3, "max_tokens": 2000, "stream": True},
+                    stream=True, timeout=30
+                )
+                _quick_full = ""
+                _quick_tok_in = 0
+                _quick_tok_out = 0
+                try:
+                    for _ql in _quick_resp.iter_lines():
+                        if not _ql: continue
+                        _qls = _ql.decode("utf-8", errors="replace")
+                        if not _qls.startswith("data: "): continue
+                        _qps = _qls[6:]
+                        if _qps.strip() == "[DONE]": break
+                        try:
+                            _qc = _json.loads(_qps)
+                            _qt = _qc.get("choices", [{}])[0].get("delta", {}).get("content", "")
+                            if _qt:
+                                _quick_full += _qt
+                                yield "data: " + _json.dumps({"type": "content", "text": _qt}) + SSE
+                            _qu = _qc.get("usage")
+                            if _qu:
+                                _quick_tok_in += _qu.get("prompt_tokens", 0)
+                                _quick_tok_out += _qu.get("completion_tokens", 0)
+                        except: pass
+                except Exception as _qe:
+                    yield "data: " + _json.dumps({"type": "error", "text": str(_qe)}) + SSE
+                # Save response and cost
+                assistant_content = _quick_full
+                _qcost = _quick_tok_in * 0.20 / 1e6 + _quick_tok_out * 1.10 / 1e6
+                with _lock:
+                    _db2 = _load_db()
+                    _db2["chats"][chat_id]["messages"].append({"role": "assistant", "content": assistant_content, "created_at": _now_iso()})
+                    _db2["chats"][chat_id]["total_cost"] = _db2["chats"][chat_id].get("total_cost", 0) + _qcost
+                    _save_db(_db2)
+                yield "data: " + _json.dumps({"type": "done", "cost": _qcost, "tokens_in": _quick_tok_in, "tokens_out": _quick_tok_out, "model": "MiniMax M2.5"}) + SSE
+                return
             
             if _ORCHESTRATOR_AVAILABLE:
                 try:

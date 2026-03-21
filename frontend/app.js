@@ -70,6 +70,7 @@ const state = {
   activityCollapsed: true,
   theme: localStorage.getItem('orion_theme') || 'dark',
 };
+window.state = state; // DEBUG export
 
 /* ── API ─────────────────────────────────────────────────── */
 const API = {
@@ -225,9 +226,10 @@ const ChatList = {
   },
   render(filter = '') {
     const list = $('chat-list');
-    const chats = filter
+    const _allChats = filter
       ? state.chats.filter(c => (c.title||'').toLowerCase().includes(filter.toLowerCase()))
       : state.chats;
+    const chats = _allChats.slice(0, 50); // Limit to 50 for performance
     if (!chats.length) {
       list.innerHTML = '<div class="chat-list-empty">Нет чатов</div>';
       return;
@@ -629,6 +631,49 @@ const SSE = {
         const think = data.thinking || data.text || '';
         state.streamingThinking += think;
         Activity.logThink(think);
+        break;
+      }
+      case 'thinking_start': {
+        Activity.setStatus('running', 'Думает...');
+        break;
+      }
+      case 'thinking_end': {
+        Activity.setStatus('running', 'Выполняет...');
+        break;
+      }
+      case 'thinking_step': {
+        const thinkStep = data.text || data.content || '';
+        if (thinkStep) Activity.logThink(thinkStep);
+        break;
+      }
+      // ── Agent iteration ──
+      case 'agent_iteration': {
+        const iter = data.iteration || 0;
+        const maxIter = data.max || data.max_iterations || 0;
+        Activity.setProgress(iter, maxIter);
+        const iterCost = data.task_cost || 0;
+        if (iterCost > 0) Budget.update(iterCost);
+        break;
+      }
+      // ── Tool start (from agent_loop) ──
+      case 'tool_start': {
+        const tsName = data.tool || data.name || 'tool';
+        const tsArgs = data.args || data.input || {};
+        const tsArgStr = typeof tsArgs === 'string' ? tsArgs : (tsArgs.command || tsArgs.url || tsArgs.query || JSON.stringify(tsArgs)).substring(0, 80);
+        const tsId = Activity.addTool(tsName, tsArgStr);
+        this.toolMap[data.id || tsName] = tsId;
+        Activity.setStatus('running', 'Выполняет: ' + tsName);
+        document.getElementById('intent-badge').textContent = '🔧 ' + tsName;
+        break;
+      }
+      // ── Tool result (from agent_loop) ──
+      case 'tool_result': {
+        const trName = data.tool || data.tool_name || '';
+        const trId = this.toolMap[data.id || trName];
+        const trOut = data.output || data.result || data.preview || data.content || '';
+        const trErr = data.is_error || data.error || false;
+        if (trId) Activity.updateTool(trId, trErr ? 'error' : 'done', typeof trOut === 'string' ? trOut.substring(0, 100) : JSON.stringify(trOut).substring(0, 100));
+        if (data.screenshot) Activity.addScreenshot(data.screenshot);
         break;
       }
       // ── Tool use ──
