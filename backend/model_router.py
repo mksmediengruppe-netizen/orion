@@ -86,6 +86,15 @@ MODELS = {
         "description": "Turbo Hands: SSH, FTP, браузер, деплой — действия на сервере",
         "max_tokens": 32768
     }
+    "gemini_flash": {
+        "id": "google/gemini-2.5-flash",
+        "name": "Gemini 2.5 Flash",
+        "input_price": 0.15,
+        "output_price": 0.60,
+        "role": "fast_worker",
+        "description": "Быстрый и дешёвый, умеет function calling",
+        "max_tokens": 65536
+    },
 }
 
 # ══════════════════════════════════════════════════════════════
@@ -344,7 +353,7 @@ def _get_fallback_chain(model_key: str) -> List[str]:
         "sonnet":   ["anthropic/claude-sonnet-4.6", "google/gemini-2.5-pro", "minimax/minimax-m2.5"],
         "gemini":   ["google/gemini-2.5-pro", "anthropic/claude-sonnet-4.6", "minimax/minimax-m2.5"],
         "minimax_fallback": ["minimax/minimax-m2.5", "xiaomi/mimo-v2-flash", "anthropic/claude-sonnet-4.6"],
-        "gemini_flash":  ["minimax/minimax-m2.5", "minimax/minimax-m2.7", "xiaomi/mimo-v2-flash"],
+        "gemini_flash":  ["google/gemini-2.5-flash", "minimax/minimax-m2.5", "xiaomi/mimo-v2-flash"],
         "mimo":     ["xiaomi/mimo-v2-flash", "xiaomi/mimo-v2-omni", "minimax/minimax-m2.5"],  # PATCH fix
     }
     return chains.get(model_key, chains["gemini_flash"])  # PATCH fix: minimax as default chain
