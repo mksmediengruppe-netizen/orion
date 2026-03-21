@@ -58,6 +58,7 @@ class TaskScorecard:
     def _init_db(self):
         os.makedirs(os.path.dirname(self._db_path), exist_ok=True)
         conn = sqlite3.connect(self._db_path)
+        conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("""
             CREATE TABLE IF NOT EXISTS task_scorecards (
@@ -111,8 +112,12 @@ class TaskScorecard:
 
     def _conn(self):
         if _USE_UNIFIED_DB:
-            return _unified_conn()
-        return sqlite3.connect(self._db_path)
+            conn = _unified_conn()
+            conn.row_factory = sqlite3.Row
+            return conn
+        conn = sqlite3.connect(self._db_path)
+        conn.row_factory = sqlite3.Row
+        return conn
 
     # ═══════════════════════════════════════════
     # CREATE
@@ -391,6 +396,12 @@ class TaskScorecard:
     # ═══════════════════════════════════════════
 
     def _row_to_dict(self, row) -> Dict:
+        """Convert sqlite3.Row or tuple to dict."""
+        if row is None:
+            return {}
+        if isinstance(row, sqlite3.Row):
+            return dict(row)
+        # Fallback for tuple rows
         cols = [
             "task_id", "chat_id", "user_id", "orion_mode",
             "started_at", "finished_at", "duration_seconds",
@@ -401,26 +412,8 @@ class TaskScorecard:
             "verdict", "quality_score", "final_answer_len",
             "objective", "status", "created_at", "updated_at"
         ]
-        d = dict(zip(cols, row))
-        try:
-            d["tool_calls"] = json.loads(d.pop("tool_calls_json", "{}"))
-        except Exception:
-            d["tool_calls"] = {}
-        try:
-            d["errors"] = json.loads(d.pop("errors_json", "[]"))
-        except Exception:
-            d["errors"] = []
+        d = {}
+        for i, c in enumerate(cols):
+            if i < len(row):
+                d[c] = row[i]
         return d
-
-
-# ═══════════════════════════════════════════
-# SINGLETON
-# ═══════════════════════════════════════════
-
-_scorecard_store: Optional[TaskScorecard] = None
-
-def get_scorecard_store() -> TaskScorecard:
-    global _scorecard_store
-    if _scorecard_store is None:
-        _scorecard_store = TaskScorecard()
-    return _scorecard_store
