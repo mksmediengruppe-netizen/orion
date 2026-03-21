@@ -367,7 +367,7 @@ class AgentLoop:
 
         # LangGraph checkpointer
         self._checkpoint_conn = sqlite3.connect(
-            os.environ.get("ORION_DB_PATH", "/var/www/orion/data/database.sqlite"), check_same_thread=False
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "database.sqlite"), check_same_thread=False
         )
         self._checkpointer = SqliteSaver(self._checkpoint_conn)
 

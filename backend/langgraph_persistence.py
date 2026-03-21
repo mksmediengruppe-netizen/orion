@@ -10,7 +10,7 @@ import os
 
 logger = logging.getLogger("orion.langgraph_persistence")
 
-DB_PATH = os.environ.get("ORION_DB_PATH", "/var/www/orion/data/database.sqlite")
+DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "database.sqlite")
 
 _instance = None
 

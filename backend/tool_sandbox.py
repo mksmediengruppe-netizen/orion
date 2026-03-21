@@ -141,6 +141,7 @@ class ToolSandbox:
         self._explicit_denies: Set[str] = set()    # Явно запрещённые инструменты
         self._require_confirm: Set[str] = set()    # Требуют подтверждения
         self._confirm_callback: Optional[Callable] = None
+        self.browser_read_only = True  # TASK 4: browser read-only by default
 
     def configure(
         self,
@@ -289,10 +290,11 @@ class ToolSandbox:
     def get_allowed_tools(self) -> List[str]:
         """Список разрешённых инструментов."""
         all_tools = list(TOOL_PERMISSIONS.keys()) + list(self._explicit_allows)
+        result = [t for t in all_tools if self.check(t)["allowed"]]
         # ── TASK 4: Browser read_only filter ──
         if self.browser_read_only:
-            allowed = [t for t in allowed if t.get("name", t if isinstance(t, str) else "") not in BROWSER_INTERACTIVE_TOOLS]
-        return [t for t in all_tools if self.check(t)["allowed"]]
+            result = [t for t in result if t not in BROWSER_INTERACTIVE_TOOLS]
+        return result
 
     def get_denied_tools(self) -> List[str]:
         """Список запрещённых инструментов."""

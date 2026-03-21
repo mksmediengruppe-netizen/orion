@@ -171,6 +171,7 @@ def init_db():
             task_id TEXT PRIMARY KEY,
             chat_id TEXT DEFAULT '',
             user_id TEXT DEFAULT '',
+            orion_mode TEXT DEFAULT 'default',
             objective TEXT DEFAULT '',
             status TEXT DEFAULT 'running',
             started_at REAL,
