@@ -63,14 +63,14 @@ TOOL_PERMISSIONS: Dict[str, str] = {
 
     # EXECUTE
     "ssh_execute":         PERM_EXECUTE,
-    "browser_navigate":    PERM_EXECUTE,
+    "browser_navigate":    PERM_READ,     # reclassified: navigation is reading
     "browser_click":       PERM_EXECUTE,
     "browser_submit":      PERM_EXECUTE,
     "browser_js":          PERM_EXECUTE,
     "browser_press_key":   PERM_EXECUTE,
-    "browser_scroll":      PERM_EXECUTE,
-    "browser_hover":       PERM_EXECUTE,
-    "browser_wait":        PERM_EXECUTE,
+    "browser_scroll":      PERM_READ,     # reclassified: scrolling is reading
+    "browser_hover":       PERM_READ,     # reclassified: hover is passive
+    "browser_wait":        PERM_READ,     # reclassified: waiting is passive
     "browser_select":      PERM_EXECUTE,
     "ftp_upload":          PERM_EXECUTE,
     "ftp_download":        PERM_EXECUTE,
@@ -114,6 +114,16 @@ AUTONOMY_PERMISSIONS: Dict[str, Set[str]] = {
     "supervised":{PERM_READ, PERM_WRITE},  # Требует подтверждения для execute+
 }
 
+
+
+# ═══════════════════════════════════════════
+# BROWSER INTERACTIVE TOOLS (blocked in read_only mode)
+# ═══════════════════════════════════════════
+BROWSER_INTERACTIVE_TOOLS = {
+    "browser_click", "browser_fill", "browser_type", "browser_submit",
+    "browser_js", "browser_press_key", "browser_select",
+    "browser_ask_auth", "browser_ask_user", "browser_takeover_done",
+}
 
 class ToolSandbox:
     """
@@ -268,6 +278,9 @@ class ToolSandbox:
     def get_allowed_tools(self) -> List[str]:
         """Список разрешённых инструментов."""
         all_tools = list(TOOL_PERMISSIONS.keys()) + list(self._explicit_allows)
+        # ── TASK 4: Browser read_only filter ──
+        if self.browser_read_only:
+            allowed = [t for t in allowed if t.get("name", t if isinstance(t, str) else "") not in BROWSER_INTERACTIVE_TOOLS]
         return [t for t in all_tools if self.check(t)["allowed"]]
 
     def get_denied_tools(self) -> List[str]:
