@@ -29,6 +29,12 @@ app.register_blueprint(task_bp)
 app.register_blueprint(canvas_bp)
 app.register_blueprint(misc_bp)
 
+
+# ── TASK 10: Start crash recovery watchdog ──
+from crash_recovery import get_crash_recovery
+_crash_recovery = get_crash_recovery()
+_crash_recovery.start_watchdog()
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 3510))
     app.run(host="0.0.0.0", port=port, debug=False)

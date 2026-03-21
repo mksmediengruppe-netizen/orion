@@ -58,6 +58,7 @@ _goal_keeper = GoalKeeper()
 # ═══ BLOCK 4: Artifact Handoff + Final Judge + Tool Sandbox + Scorecard + Autonomy ═══
 from artifact_handoff import ArtifactHandoff, get_handoff_store
 from amendment_extractor import AmendmentExtractor, get_amendment_extractor
+from crash_recovery import CrashRecovery, get_crash_recovery
 from final_judge import FinalJudge, get_final_judge, VERDICT_PASS, VERDICT_PARTIAL, VERDICT_FAIL
 from tool_sandbox import ToolSandbox, get_tool_sandbox, TOOL_PERMISSIONS
 from task_scorecard import TaskScorecard, get_scorecard_store
@@ -4167,6 +4168,11 @@ ReactDOM.createRoot(document.getElementById('root')).render(<App />);
                             logger.warning(f"Memory after_chat (task_complete) failed: {_mem_tc_err}")
                     # ── PATCH 3: Clear checkpoint on successful completion ──
                     _clear_checkpoint()
+                    # ── TASK 10: Complete checkpoint on success ──
+                    try:
+                        self._crash_recovery.complete_checkpoint(str(getattr(self, '_chat_id', '')))
+                    except Exception:
+                        pass
                     return
 
                 # ── BUG-1 FIX: handle memory tools first ──
@@ -4393,6 +4399,25 @@ ReactDOM.createRoot(document.getElementById('root')).render(<App />);
                 # ── CHECKPOINT: save after each tool call ──
                 _task_cost = max(0.0, self._session_cost - _task_cost_prev)
                 _save_checkpoint(iteration, tool_name, result_preview, _task_cost)
+                # ── TASK 10: Heartbeat for crash recovery ──
+                try:
+                    self._crash_recovery.heartbeat(str(getattr(self, '_chat_id', '')))
+                except Exception:
+                    pass
+                    # ── TASK 10: Persistent checkpoint in SQLite ──
+                    try:
+                        self._crash_recovery.save_checkpoint(
+                            task_id=str(getattr(self, '_current_task_id', '')),
+                            chat_id=str(getattr(self, '_chat_id', '')),
+                            iteration=iteration,
+                            last_tool=tool_name,
+                            actions_count=iteration,
+                            task_cost=_task_cost,
+                            user_message=user_message[:500] if user_message else '',
+                            orion_mode=str(getattr(self, 'mode', 'turbo'))
+                        )
+                    except Exception:
+                        pass
 
                 # ── ПАТЧ W1-5: Автоанализ скриншота после browser_navigate ──
                 if tool_name == "browser_navigate" and _screenshot and result.get("success"):
