@@ -314,6 +314,7 @@ class Orchestrator:
         self.project_context = ""
 
     def plan(self, message, chat_history=None, has_ssh=False, ssh_info=""):
+        logger.info(f"[Orchestrator] Planning with mode={self.orion_mode}")
         msg = message.lower().strip()
 
         if self._is_simple_chat(msg):
@@ -475,7 +476,13 @@ class Orchestrator:
         messages = [{"role":"system","content":system},{"role":"user","content":f"Задача: {message}"}]
 
         try:
-            response = self.call_llm(messages, model="google/gemini-2.5-flash")  # PATCH fix: real model ID
+            # Smart Turbo: Opus plans, others execute
+            if self.orion_mode == "smart_turbo":
+                _plan_model = "anthropic/claude-opus-4"
+                logger.info("[Smart Turbo] Opus planning...")
+            else:
+                _plan_model = "google/gemini-2.5-flash"
+            response = self.call_llm(messages, model=_plan_model)
             logger.info(f"[Orchestrator] LLM raw response: {response[:3000] if response else 'EMPTY'}")
             plan = self._parse_json(response)
             logger.info(f"[Orchestrator] Parsed plan: {plan}")
