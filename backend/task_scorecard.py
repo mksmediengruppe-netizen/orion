@@ -400,7 +400,19 @@ class TaskScorecard:
         if row is None:
             return {}
         if isinstance(row, sqlite3.Row):
-            return dict(row)
+            d = dict(row)
+            # Parse JSON fields for convenience
+            import json as _json
+            for jf in ("tool_calls_json", "errors_json"):
+                if jf in d and isinstance(d[jf], str):
+                    try:
+                        parsed = _json.loads(d[jf])
+                        # Add without _json suffix
+                        key = jf.replace("_json", "")
+                        d[key] = parsed
+                    except (ValueError, TypeError):
+                        pass
+            return d
         # Fallback for tuple rows
         cols = [
             "task_id", "chat_id", "user_id", "orion_mode",
