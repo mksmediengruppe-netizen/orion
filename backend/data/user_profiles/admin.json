@@ -1,6 +1,6 @@
 {
   "user_id": "admin",
-  "chat_count": 812,
+  "chat_count": 820,
   "facts": [
     "Пользователя зовут Тестер5",
     "Работает с Elixir и Phoenix",
@@ -208,7 +208,10 @@
     "server_path": "/root/priority_queue/",
     "область": "чат-боты и автоматизация",
     "библиотека для мониторинга": "watchdog",
-    "reporting": "system_usage_reports"
+    "reporting": "system_usage_reports",
+    "тема": "математические алгоритмы (числа Фибоначчи)",
+    "предпочитает простые решения": true,
+    "уровень опыта": "начинающий"
   },
   "expertise_level": "unknown"
 }

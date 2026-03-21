@@ -22,9 +22,13 @@ const API_BASE = '/api';
 const SSE_TIMEOUT = 120000;
 
 const MODES = {
-    'turbo-basic':   { label: 'Turbo',     tag: 'TURBO', desc: 'MiniMax думает + MiMo действует. Быстро и экономично.' },
-    'pro-basic':     { label: 'Pro',       tag: 'PRO',   desc: 'Claude Sonnet 4.6. Планирование, code review, качество.' },
-    'architect':     { label: 'Architect', tag: 'OPUS',  desc: 'Claude Opus 4. Архитектура, глубокий анализ, аудит кода.' }
+    'turbo-basic':     { label: 'Turbo',        tag: 'TURBO', desc: 'MiniMax думает + MiMo действует. Быстро и экономично.' },
+    'turbo_standard':  { label: 'Turbo',        tag: 'TURBO', desc: 'MiniMax думает + MiMo действует. Быстро и экономично.' },
+    'turbo_premium':   { label: 'Turbo Premium', tag: 'TURBO', desc: 'MiniMax M2.5 + MiMo Flash. Быстро и экономично.' },
+    'pro-basic':       { label: 'Pro',          tag: 'PRO',   desc: 'Claude Sonnet 4.6. Планирование, code review, качество.' },
+    'pro_standard':    { label: 'Pro Standard', tag: 'PRO',   desc: 'Claude Sonnet 4.6. Планирование, code review, качество.' },
+    'pro_premium':     { label: 'Pro Premium',  tag: 'PRO',   desc: 'Claude Sonnet 4.6. Премиум дизайн и копирайтинг.' },
+    'architect':       { label: 'Architect',    tag: 'OPUS',  desc: 'Claude Opus 4. Архитектура, глубокий анализ, аудит кода.' }
 };
 
 /* ── MODE_INFO (УЛУЧ-3) ──────────────────────────────────── */
@@ -35,6 +39,9 @@ const MODE_INFO = {
     'pro-basic':      { text: 'Claude Sonnet 4.6 · Планирование и качество', icon: '🧠' },
     'pro_basic':      { text: 'Claude Sonnet 4.6 · Планирование и качество', icon: '🧠' },
     'pro_standard':   { text: 'Claude Sonnet 4.6 · Планирование и качество', icon: '🧠' },
+    'turbo_premium':  { text: 'MiniMax M2.5 + MiMo Flash · Быстро и экономично', icon: '⚡' },
+    'pro-premium':    { text: 'Claude Sonnet 4.6 · Премиум дизайн и копирайтинг', icon: '🚀' },
+    'pro_premium':    { text: 'Claude Sonnet 4.6 · Премиум дизайн и копирайтинг', icon: '🚀' },
     'architect':      { text: 'Claude Opus 4 · Архитектор · Для сложных задач', icon: '🏛' },
 };
 
@@ -439,7 +446,7 @@ const UI = {
         // ПАТЧ W1-1: Восстановить режим из localStorage
         try {
             const savedMode = localStorage.getItem('orion_mode');
-            if (savedMode && ['turbo_basic', 'turbo-basic', 'turbo_standard', 'pro_basic', 'pro-basic', 'pro_standard', 'architect'].includes(savedMode)) {
+            if (savedMode && ['turbo_basic', 'turbo-basic', 'turbo_standard', 'turbo_premium', 'pro_basic', 'pro-basic', 'pro_standard', 'pro_premium', 'architect'].includes(savedMode)) {
                 state.mode = savedMode;
             }
         } catch(e) {}
@@ -565,13 +572,16 @@ const UI = {
             'turbo-basic': 'MiniMax + MiMo',
             'turbo_basic': 'MiniMax + MiMo',
             'turbo_standard': 'MiniMax + MiMo',
+            'turbo_premium': 'MiniMax + MiMo',
             'pro-basic': 'Claude Sonnet',
             'pro_basic': 'Claude Sonnet',
             'pro_standard': 'Claude Sonnet',
+            'pro-premium': 'Claude Sonnet 4.6',
+            'pro_premium': 'Claude Sonnet 4.6',
             'architect': 'Claude Opus 4'
         };
         const modelLabel = document.querySelector('.header-model, .model-label, [data-model]');
-        if (modelLabel) modelLabel.textContent = MODEL_LABELS[key] || 'DeepSeek V3';
+        if (modelLabel) modelLabel.textContent = MODEL_LABELS[key] || MODEL_LABELS[key.replace('-','_')] || 'ORION AI';
     },
 
     updateModeDesc() {
@@ -699,13 +709,15 @@ const UI = {
         state.isStreaming = active;
         const sendBtn = $('btn-send');
         const stopBtn = $('btn-stop');
-        // Используем classList вместо style.display — класс hidden имеет !important
+        // During streaming: show BOTH send (for queue) and stop buttons
         if (sendBtn) {
+            sendBtn.classList.remove('hidden');
+            sendBtn.style.display = '';
             if (active) {
-                sendBtn.classList.add('hidden');
+                // Change send button appearance to indicate "queue" mode
+                sendBtn.title = 'Добавить в очередь';
             } else {
-                sendBtn.classList.remove('hidden');
-                sendBtn.style.display = '';
+                sendBtn.title = 'Отправить';
             }
         }
         if (stopBtn) {
@@ -788,11 +800,12 @@ const UI = {
         if (textarea) {
             textarea.addEventListener('keydown', e => {
                 if (e.key === 'Enter' && !e.shiftKey) {
-                    // DEBOUNCE_ENTER: предотвращаем двойную отправку
-                    if (window._enterDebounce) return;
-                    window._enterDebounce = true;
-                    setTimeout(() => { window._enterDebounce = false; }, 1000);
-
+                    // DEBOUNCE_ENTER: skip debounce during streaming (queue path)
+                    if (!state.isStreaming) {
+                        if (window._enterDebounce) return;
+                        window._enterDebounce = true;
+                        setTimeout(() => { window._enterDebounce = false; }, 1000);
+                    }
                     e.preventDefault();
                     Chat.send();
                 }
@@ -1368,22 +1381,26 @@ const Chat = {
     },
 
     async send() {
-    // DEBOUNCE: блокировка кнопки отправки на 1 секунду
+    // DEBOUNCE: блокировка кнопки отправки на 1 секунду (только для новых отправок, не для очереди)
     const btnSend = document.getElementById('btn-send') || document.querySelector('.btn-send');
-    if (btnSend && !btnSend._debouncing) {
-        btnSend._debouncing = true;
-        btnSend.disabled = true;
-        btnSend.style.opacity = '0.5';
-        btnSend.style.pointerEvents = 'none';
-        setTimeout(() => {
-            btnSend.disabled = false;
-            btnSend.style.opacity = '1';
-            btnSend.style.pointerEvents = 'auto';
-            btnSend._debouncing = false;
-        }, 1000);
-    } else if (btnSend && btnSend._debouncing) {
-        return; // Блокируем повторную отправку
+    if (!state.isStreaming) {
+        // Only debounce when NOT streaming (actual send to backend)
+        if (btnSend && !btnSend._debouncing) {
+            btnSend._debouncing = true;
+            btnSend.disabled = true;
+            btnSend.style.opacity = '0.5';
+            btnSend.style.pointerEvents = 'none';
+            setTimeout(() => {
+                btnSend.disabled = false;
+                btnSend.style.opacity = '1';
+                btnSend.style.pointerEvents = 'auto';
+                btnSend._debouncing = false;
+            }, 1000);
+        } else if (btnSend && btnSend._debouncing) {
+            return; // Блокируем повторную отправку
+        }
     }
+    // When streaming: skip debounce, message goes to queue
 
         const textarea = $('message-input');
         if (!textarea) return;
@@ -4247,6 +4264,31 @@ document.addEventListener('DOMContentLoaded', () => {
     const userCancel = $('btn-user-cancel');
     if (userCancel) userCancel.addEventListener('click', () => $('create-user-modal').classList.add('hidden'));
 
+
+    // FIX: Bind mode-select change handler directly (backup for renderModes)
+    const modeSelectEl = document.getElementById('mode-select');
+    if (modeSelectEl && !modeSelectEl._modeHandler) {
+        modeSelectEl._modeHandler = (e) => {
+            const newMode = e.target.value;
+            if (typeof UI !== 'undefined' && UI.setMode) {
+                UI.setMode(newMode);
+            }
+            // Update description below dropdown
+            const descEl = document.getElementById('mode-description');
+            if (descEl) {
+                const modeInfo = typeof MODE_INFO !== 'undefined' ? MODE_INFO[newMode] : null;
+                const modeData = typeof MODES !== 'undefined' ? MODES[newMode] : null;
+                descEl.textContent = modeInfo ? modeInfo.text : (modeData?.desc || '');
+            }
+        };
+        modeSelectEl.addEventListener('change', modeSelectEl._modeHandler);
+        // Also sync the select value with saved mode
+        const savedMode = localStorage.getItem('orion_mode');
+        if (savedMode && modeSelectEl.querySelector('option[value="' + savedMode + '"]')) {
+            modeSelectEl.value = savedMode;
+        }
+        console.log('FIX: mode-select handler bound in DOMContentLoaded');
+    }
     initResizable();
 
     MultiSSH.init();
