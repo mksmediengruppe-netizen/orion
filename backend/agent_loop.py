@@ -57,6 +57,7 @@ _snapshot_store = SnapshotStore()
 _goal_keeper = GoalKeeper()
 # ═══ BLOCK 4: Artifact Handoff + Final Judge + Tool Sandbox + Scorecard + Autonomy ═══
 from artifact_handoff import ArtifactHandoff, get_handoff_store
+from amendment_extractor import AmendmentExtractor, get_amendment_extractor
 from final_judge import FinalJudge, get_final_judge, VERDICT_PASS, VERDICT_PARTIAL, VERDICT_FAIL
 from tool_sandbox import ToolSandbox, get_tool_sandbox, TOOL_PERMISSIONS
 from task_scorecard import TaskScorecard, get_scorecard_store
