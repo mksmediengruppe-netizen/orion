@@ -46,6 +46,16 @@ from idempotency import (
     is_idempotent_command, is_mutating_command
 )
 
+# ═══ BLOCK 3: Task Charter + Execution Snapshots + Goal Keeper ═══
+from task_charter import TaskCharterStore
+from execution_snapshots import SnapshotStore
+from goal_keeper import GoalKeeper
+
+# Block 3 singletons
+_charter_store = TaskCharterStore()
+_snapshot_store = SnapshotStore()
+_goal_keeper = GoalKeeper()
+
 # ── ORION Sprint 5 imports ──────────────────────────────────
 try:
     from intent_clarifier import clarify as clarify_intent, format_clarification_for_user
@@ -1473,6 +1483,11 @@ class AgentLoop:
             "notes": []
         }
         self._snapshots = []          # Патч 4: снапшоты состояния
+        # ═══ BLOCK 3: Charter/Snapshot/GoalKeeper instances ═══
+        self._charter_store = _charter_store
+        self._snapshot_store = _snapshot_store
+        self._goal_keeper = _goal_keeper
+        self._current_task_id = None  # Set in run_stream
         self._ask_user_pending = None # Патч 5: ожидание ответа пользователя
         self._intent_result = None    # Результат intent clarifier
         self._session_cost = 0.0      # Текущая стоимость сессии
@@ -4301,6 +4316,51 @@ ReactDOM.createRoot(document.getElementById('root')).render(<App />);
         if ssh_credentials:
             self.ssh_credentials = ssh_credentials
 
+        # ═══ BLOCK 3: Create or resume Task Charter ═══
+        _b3_chat_id = getattr(self, '_chat_id', 'default') or 'default'
+        _b3_charter = self._charter_store.get_by_chat(_b3_chat_id)
+        if not _b3_charter:
+            _b3_task_id = f"{_b3_chat_id}_{int(time.time())}"
+            _b3_max_cost = 5.0
+            try:
+                _b3_cost_info = self.check_cost_limit()
+                _b3_max_cost = _b3_cost_info.get('max_cost', 5.0)
+            except Exception:
+                pass
+            _b3_charter = self._charter_store.create(
+                task_id=_b3_task_id,
+                chat_id=_b3_chat_id,
+                objective=user_message[:500],
+                constraints=[f"Бюджет: ${_b3_max_cost}"],
+            )
+            self._current_task_id = _b3_task_id
+            logger.info(f"[BLOCK3] Charter created: {_b3_task_id}")
+        else:
+            self._current_task_id = _b3_charter['task_id']
+            self._charter_store.add_amendment(
+                task_id=_b3_charter['task_id'],
+                text=user_message[:500],
+                amendment_type='user_input'
+            )
+            logger.info(f"[BLOCK3] Charter resumed: {_b3_charter['task_id']}, amendment added")
+            # ── BLOCK 3: Crash recovery ──
+            if _b3_charter.get('status') == 'active':
+                _b3_state = self._charter_store.reconstruct_state(_b3_charter['task_id'])
+                _b3_snap = self._snapshot_store.latest(_b3_charter['task_id'])
+                if _b3_snap and _b3_state.get('completed'):
+                    _b3_resume = (
+                        f"[ВОССТАНОВЛЕНИЕ ПОСЛЕ СБОЯ]\n"
+                        f"Задача: {_b3_state['active_task']}\n"
+                        f"Выполнено: {', '.join(_b3_state['completed'][-5:])}\n"
+                        f"Не забыть: {', '.join(_b3_state.get('must_not_forget', []))}\n"
+                        f"Следующий шаг: {_b3_state['next_safe_step']}\n"
+                        f"Продолжи с этого места. Не повторяй уже сделанное."
+                    )
+                    if chat_history is None:
+                        chat_history = []
+                    chat_history.append({'role': 'system', 'content': _b3_resume})
+                    logger.info(f"[BLOCK3] Crash recovery injected for {_b3_charter['task_id']}")
+
         # ── ORION: Intent Clarifier ───────────────────────────────
         if _INTENT_CLARIFIER_AVAILABLE:
             try:
@@ -4757,6 +4817,20 @@ ReactDOM.createRoot(document.getElementById('root')).render(<App />);
                 messages.append({"role": "system",
                     "content": f"[TASK CHARTER — актуальный план задачи, обновляется через update_task_charter]\n{_charter_str}"})
                 logger.info(f"[Charter] Injected: goal='{self.task_charter.get('goal', '')[:50]}', steps={len(self.task_charter.get('steps', []))}, completed={len(self.task_charter.get('completed', []))}")
+            # ═══ BLOCK 3: Inject Charter v2 + Snapshot into context ═══
+            if hasattr(self, '_current_task_id') and self._current_task_id:
+                try:
+                    _b3_charter_text = self._charter_store.format_for_prompt(self._current_task_id)
+                    _b3_snapshot_text = self._snapshot_store.format_for_prompt(self._current_task_id)
+                    if _b3_charter_text:
+                        messages = [m for m in messages if not (m.get('role') == 'system' and 'TASK CHARTER (источник истины)' in str(m.get('content', '')))]
+                        messages.append({'role': 'system', 'content': _b3_charter_text})
+                    if _b3_snapshot_text:
+                        messages = [m for m in messages if not (m.get('role') == 'system' and 'EXECUTION SNAPSHOT' in str(m.get('content', '')))]
+                        messages.append({'role': 'system', 'content': _b3_snapshot_text})
+                    logger.debug(f'[BLOCK3] Charter+Snapshot injected for iter {iteration}')
+                except Exception as _b3_inj_err:
+                    logger.debug(f'[BLOCK3] Injection error: {_b3_inj_err}')
             # Legacy todo.md support (backward compat)
             _todo_path = f"/tmp/orion_todo_{getattr(self, '_chat_id', 'default')}.md"
             if os.path.exists(_todo_path) and not self.task_charter.get('goal'):
@@ -4968,6 +5042,24 @@ ReactDOM.createRoot(document.getElementById('root')).render(<App />);
                         "summary": summary
                     })
                     yield self._sse({"type": "task_complete", "summary": summary})
+                    # ═══ BLOCK 3: Mark charter complete + final snapshot ═══
+                    if hasattr(self, '_current_task_id') and self._current_task_id:
+                        try:
+                            self._charter_store.complete(self._current_task_id)
+                            self._snapshot_store.create(
+                                task_id=self._current_task_id,
+                                step_id='final',
+                                snapshot_type='before_final',
+                                iteration=iteration,
+                                cost_so_far=_task_cost,
+                                completed_actions=[{
+                                    'tool': a['tool'],
+                                    'success': a.get('success', False)
+                                } for a in self.actions_log[-20:]]
+                            )
+                            logger.info(f'[BLOCK3] Charter completed: {self._current_task_id}')
+                        except Exception as _b3_tc_err:
+                            logger.debug(f'[BLOCK3] task_complete error: {_b3_tc_err}')
                     yield self._sse({"type": "usage", "prompt_tokens": self.total_tokens_in, "completion_tokens": self.total_tokens_out})
 
                     # ── ПАТЧ 6: Автопроверка после task_complete ──
@@ -5087,6 +5179,35 @@ ReactDOM.createRoot(document.getElementById('root')).render(<App />);
                             "попробуй другой способ."})
                         logging.warning(f"[ANTI-LOOP] Turbo mode loop → escalated to Sonnet")
 
+                # ═══ BLOCK 3: GoalKeeper validation before execution ═══
+                if hasattr(self, '_current_task_id') and self._current_task_id:
+                    try:
+                        _b3_charter = self._charter_store.get(self._current_task_id)
+                        _b3_snap = self._snapshot_store.latest(self._current_task_id)
+                        _b3_validation = self._goal_keeper.validate_next_action(
+                            task_charter=_b3_charter,
+                            latest_snapshot=_b3_snap,
+                            proposed_action={'tool': tool_name, 'args': tool_args}
+                        )
+                        if not _b3_validation['approved']:
+                            logger.warning(f"[BLOCK3-GK] BLOCKED: {tool_name} — {_b3_validation['blocked_reason']}")
+                            messages.append({
+                                'role': 'tool',
+                                'tool_call_id': tool_id,
+                                'content': f"⛔ GoalKeeper заблокировал {tool_name}: {_b3_validation['blocked_reason']}. Выбери другой подход."
+                            })
+                            yield self._sse({
+                                'type': 'tool_result', 'tool': tool_name, 'success': False,
+                                'preview': f"Blocked: {_b3_validation['blocked_reason']}",
+                                'iteration': iteration
+                            })
+                            continue
+                        _b3_gk_warnings = self._goal_keeper.format_warnings_for_prompt(_b3_validation)
+                        if _b3_gk_warnings:
+                            messages.append({'role': 'system', 'content': _b3_gk_warnings})
+                            logger.info(f"[BLOCK3-GK] Warnings for {tool_name}: {_b3_gk_warnings[:100]}")
+                    except Exception as _b3_gk_err:
+                        logger.debug(f'[BLOCK3-GK] Error: {_b3_gk_err}')
                 # Execute the tool
                 start_time = time.time()
                 result = self._execute_tool(tool_name, tool_args_str)
@@ -5100,6 +5221,38 @@ ReactDOM.createRoot(document.getElementById('root')).render(<App />);
                     "elapsed": elapsed,
                     "timestamp": datetime.now(timezone.utc).isoformat()
                 })
+                # ═══ BLOCK 3: Create Snapshot after tool execution ═══
+                if hasattr(self, '_current_task_id') and self._current_task_id:
+                    try:
+                        _b3_prev_snap = self._snapshot_store.latest(self._current_task_id)
+                        _b3_prev_actions = _b3_prev_snap.get('completed_actions', [])[-19:] if _b3_prev_snap else []
+                        _b3_new_action = {
+                            'tool': tool_name,
+                            'args_preview': str(self._sanitize_args(tool_args))[:100],
+                            'success': result.get('success', False),
+                            'result': str(result)[:200]
+                        }
+                        _b3_artifacts = [
+                            a['args'].get('path', '')
+                            for a in self.actions_log
+                            if a['tool'] == 'file_write' and a.get('success')
+                        ][-10:]
+                        self._snapshot_store.create(
+                            task_id=self._current_task_id,
+                            step_id=f'iter_{iteration}_{tool_name}',
+                            snapshot_type='tool_action',
+                            iteration=iteration,
+                            completed_actions=[_b3_new_action] + _b3_prev_actions,
+                            artifacts_created=_b3_artifacts,
+                            cost_so_far=_task_cost,
+                            next_expected_step='определяется моделью'
+                        )
+                        self._charter_store.update(self._current_task_id, {
+                            'total_iterations': iteration,
+                            'total_cost': _task_cost
+                        })
+                    except Exception as _b3_snap_err:
+                        logger.debug(f'[BLOCK3] Snapshot error: {_b3_snap_err}')
 
                 # ── FIX-4: Auto step_update — match tool calls to plan steps ──
                 if _task_plan_steps and result.get("success", False):
@@ -6162,6 +6315,20 @@ class MultiAgentLoop(AgentLoop):
 
         for agent_key, agent_info in self.AGENTS.items():
             if self._stop_requested:
+                # BLOCK 3: Pause charter on stop
+                if hasattr(self, "_current_task_id") and self._current_task_id:
+                    try:
+                        self._charter_store.pause(self._current_task_id)
+                        self._snapshot_store.create(
+                            task_id=self._current_task_id,
+                            step_id="stopped",
+                            snapshot_type="user_interrupt",
+                            iteration=0,
+                            cost_so_far=0
+                        )
+                        logger.info(f"[BLOCK3] Charter paused: {self._current_task_id}")
+                    except Exception as _b3_stop_err:
+                        logger.debug(f"[BLOCK3] Stop error: {_b3_stop_err}")
                 yield self._sse({"type": "stopped", "text": "Остановлено пользователем"})
                 return
 
