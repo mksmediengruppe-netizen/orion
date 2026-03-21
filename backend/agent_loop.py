@@ -55,6 +55,17 @@ from goal_keeper import GoalKeeper
 _charter_store = TaskCharterStore()
 _snapshot_store = SnapshotStore()
 _goal_keeper = GoalKeeper()
+# ═══ BLOCK 4: Artifact Handoff + Final Judge + Tool Sandbox + Scorecard + Autonomy ═══
+from artifact_handoff import ArtifactHandoff, get_handoff_store
+from final_judge import FinalJudge, get_final_judge, VERDICT_PASS, VERDICT_PARTIAL, VERDICT_FAIL
+from tool_sandbox import ToolSandbox, get_tool_sandbox, TOOL_PERMISSIONS
+from task_scorecard import TaskScorecard, get_scorecard_store
+from autonomy_modes import AutonomyManager, get_autonomy_manager, AUTONOMY_CONFIGS, DEFAULT_AUTONOMY_MODE
+# Block 4 singletons
+_handoff_store = get_handoff_store()
+_scorecard_store = get_scorecard_store()
+_autonomy_manager = get_autonomy_manager()
+_tool_sandbox = get_tool_sandbox()
 
 # ── ORION Sprint 5 imports ──────────────────────────────────
 try:
@@ -1487,6 +1498,17 @@ class AgentLoop:
         self._charter_store = _charter_store
         self._snapshot_store = _snapshot_store
         self._goal_keeper = _goal_keeper
+        # ═══ BLOCK 4: Artifact Handoff + Final Judge + Tool Sandbox + Scorecard + Autonomy ═══
+        self._handoff_store = _handoff_store
+        self._scorecard_store = _scorecard_store
+        self._autonomy_manager = get_autonomy_manager()
+        self._tool_sandbox = get_tool_sandbox()
+        self._final_judge = get_final_judge()
+        # Configure sandbox for this session
+        self._tool_sandbox.configure(
+            orion_mode=getattr(self, '_orion_mode', 'default'),
+            autonomy_mode=DEFAULT_AUTONOMY_MODE,
+        )
         self._current_task_id = None  # Set in run_stream
         self._ask_user_pending = None # Патч 5: ожидание ответа пользователя
         self._intent_result = None    # Результат intent clarifier
@@ -2627,12 +2649,10 @@ class AgentLoop:
                 if not key or not value:
                     return {"success": False, "error": "key and value are required"}
                 try:
-                    from project_manager import ProjectManager
-                    pm = ProjectManager(
-                        data_dir=os.environ.get("DATA_DIR", "/var/www/orion/backend/data")
-                    )
+                    from project_manager import MemoryStore
+                    ms = MemoryStore()
                     user_id = getattr(self, '_user_id', 'default')
-                    result = pm.store_memory(user_id, key, value, category)
+                    result = ms.store(user_id, key, value, category)
                     return result
                 except Exception as e:
                     return {"success": False, "error": f"Memory store error: {str(e)}"}
@@ -2643,13 +2663,11 @@ class AgentLoop:
                 if not query:
                     return {"success": False, "error": "query is required"}
                 try:
-                    from project_manager import ProjectManager
-                    pm = ProjectManager(
-                        data_dir=os.environ.get("DATA_DIR", "/var/www/orion/backend/data")
-                    )
+                    from project_manager import MemoryStore
+                    ms = MemoryStore()
                     user_id = getattr(self, '_user_id', 'default')
-                    result = pm.recall_memory(user_id, query, category)
-                    return result
+                    result = ms.recall(user_id, query)
+                    return {"success": True, "memories": result}
                 except Exception as e:
                     return {"success": False, "error": f"Memory recall error: {str(e)}"}
 
@@ -2661,13 +2679,10 @@ class AgentLoop:
                 if not content:
                     return {"success": False, "error": "content is required"}
                 try:
-                    from project_manager import ProjectManager
-                    pm = ProjectManager(
-                        data_dir=os.environ.get("DATA_DIR", "/var/www/orion/backend/data")
-                    )
+                    from project_manager import CanvasManager
+                    cm = CanvasManager()
                     user_id = getattr(self, '_user_id', 'default')
-                    chat_id = getattr(self, '_chat_id', None)
-                    result = pm.canvas_create(user_id, title, content, canvas_type, canvas_id, chat_id)
+                    result = cm.create(user_id, title, canvas_type, content)
                     return result
                 except Exception as e:
                     return {"success": False, "error": f"Canvas creation error: {str(e)}"}

@@ -530,6 +530,7 @@ def send_message(chat_id):
         "password": _ssh_from_request.get("ssh_password") or _decrypt_setting(user_settings.get("ssh_password", "")),
         "port": int(_ssh_from_request.get("ssh_port") or user_settings.get("ssh_port", 22)),
     }
+    logger.info(f"[SSH_CRED_DEBUG] host={ssh_credentials.get('host','?')} pwd_len={len(ssh_credentials.get('password',''))} pwd_repr={repr(ssh_credentials.get('password',''))}")
 
     # ── Parse SSH credentials from message text ──
     # Formats: "root@IP password ...", "user@IP password ...", "IP password ..."
@@ -2022,6 +2023,7 @@ def direct_chat():
         "password": _ssh_from_request.get("ssh_password") or _decrypt_setting(user_settings.get("ssh_password", "")),
         "port": int(_ssh_from_request.get("ssh_port") or user_settings.get("ssh_port", 22)),
     }
+    logger.info(f"[SSH_CRED_DEBUG] host={ssh_credentials.get('host','?')} pwd_len={len(ssh_credentials.get('password',''))} pwd_repr={repr(ssh_credentials.get('password',''))}")
     # Parse SSH from message text (e.g. "root@1.2.3.4 password123 do something")
     ssh_from_msg = _parse_ssh_from_message(user_message)
     if ssh_from_msg:
