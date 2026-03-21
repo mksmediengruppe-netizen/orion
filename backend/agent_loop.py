@@ -5138,6 +5138,33 @@ class MultiAgentLoop(AgentLoop):
                     yield self._sse({"type": "content", "text": f"  ⚠️ PremiumQC v2 ошибка: {_pqc_v2_err}\n", "agent": "Premium QC"})
             # ── END PREMIUM DESIGN QUALITY CHECK ──────────────────────────────────
 
+            # ── AUTO SITE HEALTH CHECK after deploy ──
+            if _is_deploy_phase and _qc_host:
+                try:
+                    from site_health_tester import check_site_health as _auto_health_check
+                    from site_health_tester import format_report_text as _fmt_health
+                    _health_url = f"http://{_qc_host}"
+                    # Try to find deploy path for more specific URL
+                    for _pr_name, _pr_text in phase_results.items():
+                        import re as _hp_re
+                        _hp_match = _hp_re.search(r'/var/www/html(/[\w./\-]+)', _pr_text)
+                        if _hp_match:
+                            _health_url = f"http://{_qc_host}{_hp_match.group(1).rsplit('/', 1)[0]}/"
+                            break
+                    yield self._sse({"type": "content", "text": f"\n🏥 **Site Health Check**: {_health_url}\n", "agent": "Health Check"})
+                    _health_report = _auto_health_check(_health_url, checks=["http", "performance", "links", "meta", "favicon", "aos"])
+                    _health_text = _fmt_health(_health_report)
+                    _health_score = _health_report.get("score", 0)
+                    yield self._sse({"type": "content", "text": f"  Score: {_health_score}/10\n{_health_text[:500]}\n", "agent": "Health Check"})
+                    # Store for FinalJudge
+                    self._site_health_report = _health_report
+                    self._site_health_text = _health_text
+                    import logging as _sh_log
+                    _sh_log.info(f"[SiteHealth] Auto-check {_health_url}: score={_health_score}/10")
+                except Exception as _she:
+                    import logging as _sh_log
+                    _sh_log.warning(f"[SiteHealth] Auto-check failed: {_she}")
+
             # ── QUALITY CHECK CYCLE: after deploy phases (PATCH-13: + mobile screenshot) ──
             # Detect if this was a deploy phase by agent key or phase name
             _is_deploy_phase = (

@@ -31,8 +31,8 @@ logger = logging.getLogger("model_router")
 # ══════════════════════════════════════════════════════════════
 
 MODELS = {
-    "deepseek": {
-        "id": "minimax/minimax-m2.5",  # REPLACED: deepseek removed from system
+    "minimax_fallback": {
+        "id": "minimax/minimax-m2.5",  # was deepseek, now minimax fallback
         "name": "DeepSeek V3.2",
         "input_price": 0.30,
         "output_price": 0.88,
@@ -343,7 +343,7 @@ def _get_fallback_chain(model_key: str) -> List[str]:
     chains = {
         "sonnet":   ["anthropic/claude-sonnet-4.6", "google/gemini-2.5-pro", "minimax/minimax-m2.5"],
         "gemini":   ["google/gemini-2.5-pro", "anthropic/claude-sonnet-4.6", "minimax/minimax-m2.5"],
-        "deepseek": ["minimax/minimax-m2.5", "xiaomi/mimo-v2-flash", "anthropic/claude-sonnet-4.6"],
+        "minimax_fallback": ["minimax/minimax-m2.5", "xiaomi/mimo-v2-flash", "anthropic/claude-sonnet-4.6"],
         "minimax":  ["minimax/minimax-m2.5", "minimax/minimax-m2.7", "xiaomi/mimo-v2-flash"],
         "mimo":     ["xiaomi/mimo-v2-flash", "xiaomi/mimo-v2-omni", "minimax/minimax-m2.5"],  # PATCH fix
     }
