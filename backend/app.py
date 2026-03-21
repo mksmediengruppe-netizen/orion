@@ -74,6 +74,22 @@ logging.basicConfig(
 )
 
 app = Flask(__name__)
+
+# ── PATCH: Preload SentenceTransformer encoder at startup (background thread) ──
+def _preload_sentence_encoder():
+    try:
+        from solution_cache import _get_global_encoder
+        enc = _get_global_encoder()
+        if enc:
+            logging.info('[STARTUP] SentenceTransformer encoder preloaded OK')
+        else:
+            logging.warning('[STARTUP] SentenceTransformer encoder preload failed (fallback will be used)')
+    except Exception as e:
+        logging.warning(f'[STARTUP] SentenceTransformer preload error: {e}')
+
+import threading as _preload_thread
+_preload_thread.Thread(target=_preload_sentence_encoder, daemon=True, name='encoder-preload').start()
+_preload_encoder_done = True
 app.secret_key = secrets.token_hex(32)
 app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100MB max
 
@@ -3127,6 +3143,9 @@ def direct_chat():
         except GeneratorExit:
             pass  # Клиент отключился — не делаем yield
         except Exception as e:
+            import traceback as _tb
+            _full_err = _tb.format_exc()
+            logging.error("[turbo_worker] CRASH: " + str(e))
             err_msg = "Ошибка агента: " + str(e)
             try:
                 yield "data: " + _json.dumps({"type": "error", "content": err_msg}) + SSE

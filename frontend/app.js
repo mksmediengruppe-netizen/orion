@@ -504,7 +504,8 @@ const Activity = {
   logThink(text) {
     const log = $('act-log');
     if (!log || !text) return;
-    const item = el('div', 'act-think', text.substring(0, 200) + (text.length > 200 ? '...' : ''));
+    const safeText = typeof text === 'string' ? text : JSON.stringify(text);
+    const item = el('div', 'act-think', safeText.substring(0, 300) + (safeText.length > 300 ? '...' : ''));
     log.appendChild(item);
     log.scrollTop = log.scrollHeight;
   },
@@ -628,7 +629,7 @@ const SSE = {
       // ── Thinking ──
       case 'thinking':
       case 'thinking_text': {
-        const think = data.thinking || data.text || '';
+        const think = data.thinking || data.text || data.content || '';
         state.streamingThinking += think;
         Activity.logThink(think);
         break;
@@ -687,24 +688,7 @@ const SSE = {
         $('intent-badge').textContent = '🔧 ' + name;
         break;
       }
-      // ── Tool result ──
-      case 'tool_result':
-      case 'tool_response': {
-        const toolId = data.tool_use_id || data.id || '';
-        const chipId = this.toolMap[toolId];
-        const output = data.output || data.result || data.content || '';
-        const isError = data.is_error || data.error || false;
-        if (chipId) Activity.updateTool(chipId, isError ? 'error' : 'done', typeof output === 'string' ? output : JSON.stringify(output).substring(0, 100));
-        // Log SSH/browser output
-        if (data.tool_name === 'bash' || data.tool_name === 'ssh') {
-          Activity.log('💻', 'ssh', 'Команда выполнена', typeof output === 'string' ? output.substring(0, 100) : '');
-        } else if (data.tool_name === 'browser') {
-          Activity.log('🌐', 'browser', 'Браузер', typeof output === 'string' ? output.substring(0, 80) : '');
-        }
-        // Screenshot
-        if (data.screenshot) Activity.addScreenshot(data.screenshot);
-        break;
-      }
+      // tool_result handled above
       // ── Cost ──
       case 'cost': {
         const cost = data.cost || data.total_cost || 0;

@@ -38,6 +38,7 @@ class SolutionExtractor:
         commands = []
         files_created = []
         errors_and_fixes = []
+        failed_approaches = []
         tools_used = set()
 
         for i, action in enumerate(actions_log):
@@ -46,6 +47,15 @@ class SolutionExtractor:
             success = action.get("success", False)
             result = action.get("result", "")
             tools_used.add(tool)
+
+            # Track failed approaches
+            if not success and tool:
+                failed_approaches.append({
+                    "tool": tool,
+                    "args_preview": str(args)[:200],
+                    "error": str(result)[:300] if result else "unknown",
+                    "iteration": i
+                })
 
             # SSH commands
             if tool == "ssh_execute":
@@ -98,11 +108,55 @@ class SolutionExtractor:
             "commands": commands[-20:],  # Last 20 successful commands
             "files_created": files_created,
             "errors_and_fixes": errors_and_fixes[:10],
+            "failed_approaches": failed_approaches[:15],
+            "failure_patterns": _extract_failure_patterns(failed_approaches),
             "tools_used": list(tools_used),
             "total_actions": len(actions_log),
             "success_rate": sum(1 for a in actions_log if a.get("success", False)) / max(len(actions_log), 1)
         }
 
+
+def _extract_failure_patterns(failed_approaches: list) -> list:
+    """Выделяет паттерны из неудачных подходов."""
+    patterns = []
+    error_types = {}
+    for fa in failed_approaches:
+        error_key = fa["error"][:50]
+        if error_key not in error_types:
+            error_types[error_key] = {"count": 0, "tools": set(), "first_error": fa["error"]}
+        error_types[error_key]["count"] += 1
+        error_types[error_key]["tools"].add(fa["tool"])
+
+    for key, data in error_types.items():
+        if data["count"] >= 2:  # Повторяющаяся ошибка
+            patterns.append({
+                "pattern": key,
+                "count": data["count"],
+                "tools": list(data["tools"]),
+                "recommendation": f"НЕ используй этот подход — ошибка повторялась {data['count']} раз"
+            })
+    return patterns
+
+
+# ── PATCH: Global singleton encoder to avoid reloading on every SolutionCache() ──
+_GLOBAL_ENCODER = None
+_GLOBAL_ENCODER_LOCK = None
+
+def _get_global_encoder():
+    global _GLOBAL_ENCODER, _GLOBAL_ENCODER_LOCK
+    import threading
+    if _GLOBAL_ENCODER_LOCK is None:
+        _GLOBAL_ENCODER_LOCK = threading.Lock()
+    with _GLOBAL_ENCODER_LOCK:
+        if _GLOBAL_ENCODER is None:
+            try:
+                from sentence_transformers import SentenceTransformer
+                _GLOBAL_ENCODER = SentenceTransformer("paraphrase-multilingual-MiniLM-L12-v2")
+                logger.info("Solution cache: global neural encoder loaded")
+            except Exception as e:
+                logger.warning(f"Solution cache: encoder not available ({e}), using fallback")
+                _GLOBAL_ENCODER = False  # Mark as failed so we don't retry
+    return _GLOBAL_ENCODER if _GLOBAL_ENCODER is not False else None
 
 class SolutionCache:
     """
@@ -136,12 +190,23 @@ class SolutionCache:
                 commands TEXT DEFAULT '[]',
                 files_created TEXT DEFAULT '[]',
                 errors_and_fixes TEXT DEFAULT '[]',
+                failed_approaches TEXT DEFAULT '[]',
+                failure_patterns TEXT DEFAULT '[]',
                 confidence REAL DEFAULT 0.5,
                 use_count INTEGER DEFAULT 0,
                 created_at REAL,
                 updated_at REAL
             )
         """)
+        # Add columns for existing DBs (migration)
+        try:
+            conn.execute("ALTER TABLE solutions ADD COLUMN failed_approaches TEXT DEFAULT '[]'")
+        except Exception:
+            pass
+        try:
+            conn.execute("ALTER TABLE solutions ADD COLUMN failure_patterns TEXT DEFAULT '[]'")
+        except Exception:
+            pass
         conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_solutions_created
             ON solutions(created_at DESC)
@@ -151,14 +216,8 @@ class SolutionCache:
         logger.info(f"Solution cache DB initialized: {self._db_path}")
 
     def _init_encoder(self):
-        """Инициализирует sentence-transformers encoder (тот же что в memory_v9)."""
-        try:
-            from sentence_transformers import SentenceTransformer
-            self._encoder = SentenceTransformer("paraphrase-multilingual-MiniLM-L12-v2")
-            logger.info("Solution cache: neural encoder loaded")
-        except Exception as e:
-            logger.warning(f"Solution cache: encoder not available ({e}), using fallback")
-            self._encoder = None
+        """Инициализирует sentence-transformers encoder (singleton)."""
+        self._encoder = _get_global_encoder()
 
     def _embed(self, text: str) -> np.ndarray:
         """Создаёт эмбеддинг текста."""
@@ -196,14 +255,15 @@ class SolutionCache:
             conn = sqlite3.connect(self._db_path)
             rows = conn.execute(
                 "SELECT id, task_embedding, task_text, solution_summary, commands, "
-                "files_created, errors_and_fixes, confidence, use_count FROM solutions "
+                "files_created, errors_and_fixes, failed_approaches, failure_patterns, "
+                "confidence, use_count FROM solutions "
                 "ORDER BY created_at DESC LIMIT 100"
             ).fetchall()
             conn.close()
 
             results = []
             for row in rows:
-                row_id, emb_blob, t_text, summary, cmds, files, errors, conf, use_count = row
+                row_id, emb_blob, t_text, summary, cmds, files, errors, failed, patterns, conf, use_count = row
                 if emb_blob:
                     stored_emb = np.frombuffer(emb_blob, dtype=np.float32)
                     sim = self._cosine_sim(query_emb, stored_emb)
@@ -216,6 +276,8 @@ class SolutionCache:
                             "commands": json.loads(cmds) if cmds else [],
                             "files_created": json.loads(files) if files else [],
                             "errors_and_fixes": json.loads(errors) if errors else [],
+                            "failed_approaches": json.loads(failed) if failed else [],
+                            "failure_patterns": json.loads(patterns) if patterns else [],
                             "confidence": conf,
                             "use_count": use_count
                         })
@@ -260,8 +322,9 @@ class SolutionCache:
                 # Новая запись
                 conn.execute(
                     "INSERT INTO solutions (task_embedding, task_text, solution_summary, "
-                    "agent_key, commands, files_created, errors_and_fixes, confidence, "
-                    "use_count, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "agent_key, commands, files_created, errors_and_fixes, "
+                    "failed_approaches, failure_patterns, confidence, "
+                    "use_count, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         emb_blob,
                         task_text[:500],
@@ -270,6 +333,8 @@ class SolutionCache:
                         json.dumps(extracted.get("commands", []), ensure_ascii=False),
                         json.dumps(extracted.get("files_created", []), ensure_ascii=False),
                         json.dumps(extracted.get("errors_and_fixes", []), ensure_ascii=False),
+                        json.dumps(extracted.get("failed_approaches", []), ensure_ascii=False),
+                        json.dumps(extracted.get("failure_patterns", []), ensure_ascii=False),
                         0.5,  # initial confidence
                         0,
                         now,
@@ -345,10 +410,21 @@ class SolutionCache:
             parts.append(sol.get("solution_summary", ""))
 
             errors = sol.get("errors_and_fixes", [])
+            failed = sol.get("failed_approaches", [])
+            patterns = sol.get("failure_patterns", [])
+
+            if patterns:
+                parts.append("🚫 ИЗБЕГАЙ (повторяющиеся ошибки):")
+                for p in patterns[:3]:
+                    parts.append(f"  - {p['pattern'][:100]} (повторялось {p['count']} раз)")
+
             if errors:
-                parts.append("⚠️ Известные проблемы:")
+                parts.append("⚠️ Ошибки и как обошли:")
                 for e in errors[:3]:
-                    parts.append(f"  - {e.get('error', '')[:100]} → {e.get('fix', '')[:100]}")
+                    parts.append(f"  - {e.get('error', '')[:80]} → {e.get('fix', '')[:80]}")
+
+            if failed:
+                parts.append(f"❌ Неудачных попыток: {len(failed)} — не повторяй их")
 
         parts.append("\nИспользуй этот опыт. Не повторяй ошибки. Что работало — используй как основу.")
         return "\n".join(parts)
