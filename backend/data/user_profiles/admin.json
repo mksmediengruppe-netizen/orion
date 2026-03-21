@@ -1,6 +1,6 @@
 {
   "user_id": "admin",
-  "chat_count": 868,
+  "chat_count": 871,
   "facts": [
     "Пользователя зовут Тестер5",
     "Работает с Elixir и Phoenix",
@@ -119,7 +119,7 @@
     "color_background": "белый",
     "color_base": "#ffffff",
     "framework": "FastAPI",
-    "deployment": "systemd",
+    "deployment": "SSH деплой на Linux сервер",
     "server_user": "root",
     "api_port": "8000",
     "api_style": "REST",
@@ -182,7 +182,7 @@
     "language": "Python",
     "task_type": "system_monitoring",
     "format": "tar.gz",
-    "stack": "nginx, FastAPI, Redis",
+    "stack": "HTML/CSS/JS (одностраничный лендинг)",
     "containerization": "Docker Compose",
     "backend_language": "Python",
     "os": "Linux",
@@ -227,7 +227,10 @@
     "тип_сайта": "лендинг",
     "тематика": "кофейня",
     "количество_секций": 5,
-    "форма_заявки": true
+    "форма_заявки": true,
+    "design": "Современный дизайн с градиентами и анимациями при скролле",
+    "approach": "Mobile-first адаптивный дизайн",
+    "structure": "Одностраничный лендинг с секциями Hero, О компании, Услуги, Контакты"
   },
   "expertise_level": "unknown"
 }

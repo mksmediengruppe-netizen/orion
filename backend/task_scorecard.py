@@ -30,6 +30,13 @@ from datetime import datetime, timezone
 
 logger = logging.getLogger("task_scorecard")
 
+# Use unified database
+try:
+    from database import _get_conn as _unified_conn
+    _USE_UNIFIED_DB = True
+except ImportError:
+    _USE_UNIFIED_DB = False
+
 DB_PATH = os.path.join(
     os.environ.get("DATA_DIR", "/var/www/orion/backend/data"),
     "task_scorecards.db"
@@ -43,7 +50,10 @@ class TaskScorecard:
 
     def __init__(self, db_path: str = DB_PATH):
         self._db_path = db_path
-        self._init_db()
+        if not _USE_UNIFIED_DB:
+            self._init_db()
+        else:
+            logger.info(f"{self.__class__.__name__} using unified database.sqlite")
 
     def _init_db(self):
         os.makedirs(os.path.dirname(self._db_path), exist_ok=True)
@@ -95,10 +105,13 @@ class TaskScorecard:
         conn.execute("CREATE INDEX IF NOT EXISTS idx_sc_user ON task_scorecards(user_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_sc_status ON task_scorecards(status)")
         conn.commit()
-        conn.close()
+        if not _USE_UNIFIED_DB:
+            conn.close()
         logger.info(f"TaskScorecard DB initialized: {self._db_path}")
 
     def _conn(self):
+        if _USE_UNIFIED_DB:
+            return _unified_conn()
         return sqlite3.connect(self._db_path)
 
     # ═══════════════════════════════════════════
@@ -127,7 +140,8 @@ class TaskScorecard:
                   max_iterations, objective[:500], now, now))
             conn.commit()
         finally:
-            conn.close()
+            if not _USE_UNIFIED_DB:
+                conn.close()
 
         logger.info(f"[scorecard] Started: {task_id[:8]} | {objective[:60]}")
         return self.get(task_id)
@@ -150,7 +164,8 @@ class TaskScorecard:
             WHERE task_id = ?
         """, (cost, input_tokens, output_tokens, time.time(), task_id))
         conn.commit()
-        conn.close()
+        if not _USE_UNIFIED_DB:
+            conn.close()
 
     def record_tool_call(self, task_id: str, tool_name: str):
         """Записать вызов инструмента."""
@@ -161,7 +176,8 @@ class TaskScorecard:
         ).fetchone()
 
         if not row:
-            conn.close()
+            if not _USE_UNIFIED_DB:
+                conn.close()
             return
 
         tool_calls = json.loads(row[0]) if row[0] else {}
@@ -176,7 +192,8 @@ class TaskScorecard:
             WHERE task_id = ?
         """, (json.dumps(tool_calls), total, time.time(), task_id))
         conn.commit()
-        conn.close()
+        if not _USE_UNIFIED_DB:
+            conn.close()
 
     def record_error(self, task_id: str, error: str, is_retry: bool = False):
         """Записать ошибку."""
@@ -187,7 +204,8 @@ class TaskScorecard:
         ).fetchone()
 
         if not row:
-            conn.close()
+            if not _USE_UNIFIED_DB:
+                conn.close()
             return
 
         errors = json.loads(row[0]) if row[0] else []
@@ -209,7 +227,8 @@ class TaskScorecard:
             WHERE task_id = ?
         """, (json.dumps(errors), retry_inc, time.time(), task_id))
         conn.commit()
-        conn.close()
+        if not _USE_UNIFIED_DB:
+            conn.close()
 
     def finish(
         self,
@@ -242,7 +261,8 @@ class TaskScorecard:
         """, (now, duration, verdict, quality_score, final_answer_len,
               status, now, task_id))
         conn.commit()
-        conn.close()
+        if not _USE_UNIFIED_DB:
+            conn.close()
 
         sc = self.get(task_id)
         if sc:
@@ -265,7 +285,8 @@ class TaskScorecard:
             "SELECT * FROM task_scorecards WHERE task_id = ?",
             (task_id,)
         ).fetchone()
-        conn.close()
+        if not _USE_UNIFIED_DB:
+            conn.close()
         return self._row_to_dict(row) if row else None
 
     def get_by_chat(self, chat_id: str, limit: int = 10) -> List[Dict]:
@@ -275,7 +296,8 @@ class TaskScorecard:
             "SELECT * FROM task_scorecards WHERE chat_id = ? ORDER BY created_at DESC LIMIT ?",
             (chat_id, limit)
         ).fetchall()
-        conn.close()
+        if not _USE_UNIFIED_DB:
+            conn.close()
         return [self._row_to_dict(r) for r in rows]
 
     def get_analytics(self, user_id: str = "", days: int = 30) -> Dict:
@@ -312,7 +334,8 @@ class TaskScorecard:
             GROUP BY orion_mode
         """, params).fetchall()
 
-        conn.close()
+        if not _USE_UNIFIED_DB:
+            conn.close()
 
         return {
             "period_days": days,

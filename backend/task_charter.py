@@ -20,6 +20,13 @@ from typing import Optional, Dict, List, Any
 
 logger = logging.getLogger("task_charter")
 
+# Use unified database
+try:
+    from database import _get_conn as _unified_conn
+    _USE_UNIFIED_DB = True
+except ImportError:
+    _USE_UNIFIED_DB = False
+
 DB_PATH = os.path.join(
     os.environ.get("DATA_DIR", "/var/www/orion/backend/data"),
     "task_charters.db"
@@ -33,7 +40,10 @@ class TaskCharterStore:
 
     def __init__(self, db_path: str = DB_PATH):
         self._db_path = db_path
-        self._init_db()
+        if not _USE_UNIFIED_DB:
+            self._init_db()
+        else:
+            logger.info(f"{self.__class__.__name__} using unified database.sqlite")
 
     def _init_db(self):
         os.makedirs(os.path.dirname(self._db_path), exist_ok=True)
@@ -82,10 +92,13 @@ class TaskCharterStore:
             ON task_charters(status)
         """)
         conn.commit()
-        conn.close()
+        if not _USE_UNIFIED_DB:
+            conn.close()
         logger.info(f"TaskCharterStore initialized: {self._db_path}")
 
     def _conn(self):
+        if _USE_UNIFIED_DB:
+            return _unified_conn()
         return sqlite3.connect(self._db_path)
 
     # ═══════════════════════════════════════════
@@ -170,7 +183,8 @@ class TaskCharterStore:
             })
             charter = self.get(task_id)
         finally:
-            conn.close()
+            if not _USE_UNIFIED_DB:
+                conn.close()
 
         return charter
 
@@ -184,7 +198,8 @@ class TaskCharterStore:
         row = conn.execute(
             "SELECT * FROM task_charters WHERE task_id = ?", (task_id,)
         ).fetchone()
-        conn.close()
+        if not _USE_UNIFIED_DB:
+            conn.close()
 
         if not row:
             return None
@@ -197,7 +212,8 @@ class TaskCharterStore:
             "SELECT * FROM task_charters WHERE chat_id = ? AND status = 'active' "
             "ORDER BY updated_at DESC LIMIT 1", (chat_id,)
         ).fetchone()
-        conn.close()
+        if not _USE_UNIFIED_DB:
+            conn.close()
 
         if not row:
             return None
@@ -224,7 +240,8 @@ class TaskCharterStore:
             "SELECT version FROM task_charters WHERE task_id = ?", (task_id,)
         ).fetchone()
         if not row:
-            conn.close()
+            if not _USE_UNIFIED_DB:
+                conn.close()
             return None
 
         new_version = row[0] + 1
@@ -264,7 +281,8 @@ class TaskCharterStore:
             vals
         )
         conn.commit()
-        conn.close()
+        if not _USE_UNIFIED_DB:
+            conn.close()
 
         return self.get(task_id)
 
@@ -287,7 +305,8 @@ class TaskCharterStore:
         ).fetchone()
 
         if not row:
-            conn.close()
+            if not _USE_UNIFIED_DB:
+                conn.close()
             return None
 
         amendments = json.loads(row[0]) if row[0] else []
@@ -304,7 +323,8 @@ class TaskCharterStore:
             (json.dumps(amendments, ensure_ascii=False), time.time(), task_id)
         )
         conn.commit()
-        conn.close()
+        if not _USE_UNIFIED_DB:
+            conn.close()
 
         logger.info(f"Amendment added to {task_id}: {text[:80]}")
         return self.get(task_id)
