@@ -8,7 +8,7 @@ Model Router — ORION Digital v2.0
   mimo     → hands   (SSH, FTP, браузер, деплой — действия на сервере)
   gemini   → designer (HTML/CSS, UI/UX, SVG)
   sonnet   → brain-pro (общение, планирование, code review)
-  deepseek → fallback (резервная модель, 3-й уровень)
+  minimax → основная модель для кода и мышления
 
 Режимы:
   turbo_standard  — MiniMax думает, MiMo действует (быстро и дёшево)
@@ -32,7 +32,7 @@ logger = logging.getLogger("model_router")
 
 MODELS = {
     "deepseek": {
-        "id": "deepseek/deepseek-v3.2",
+        "id": "minimax/minimax-m2.5",  # REPLACED: deepseek removed from system
         "name": "DeepSeek V3.2",
         "input_price": 0.30,
         "output_price": 0.88,
@@ -343,14 +343,14 @@ def _get_fallback_chain(model_key: str) -> List[str]:
     chains = {
         "sonnet":   ["anthropic/claude-sonnet-4.6", "google/gemini-2.5-pro", "minimax/minimax-m2.5"],
         "gemini":   ["google/gemini-2.5-pro", "anthropic/claude-sonnet-4.6", "minimax/minimax-m2.5"],
-        "deepseek": ["deepseek/deepseek-v3.2", "minimax/minimax-m2.5", "anthropic/claude-sonnet-4.6"],
-        "minimax":  ["minimax/minimax-m2.5", "minimax/minimax-m2.7", "deepseek/deepseek-v3.2"],
+        "deepseek": ["minimax/minimax-m2.5", "xiaomi/mimo-v2-flash", "anthropic/claude-sonnet-4.6"],
+        "minimax":  ["minimax/minimax-m2.5", "minimax/minimax-m2.7", "xiaomi/mimo-v2-flash"],
         "mimo":     ["xiaomi/mimo-v2-flash", "xiaomi/mimo-v2-omni", "minimax/minimax-m2.5"],  # PATCH fix
     }
     return chains.get(model_key, chains["minimax"])  # PATCH fix: minimax as default chain
 
 
-def get_fallback_model(current_model: str, tier: str = "deepseek") -> Optional[str]:
+def get_fallback_model(current_model: str, tier: str = "minimax") -> Optional[str]:
     """Получить следующую fallback модель."""
     chain = _get_fallback_chain(tier)
     try:
@@ -398,7 +398,7 @@ def reset_session_cost(session_id: str):
 
 
 def log_cost(user_id: str, model_id: str, tokens_in: int, tokens_out: int,
-             cost_usd: float, tier: str = "deepseek", complexity: int = 2,
+             cost_usd: float, tier: str = "minimax", complexity: int = 2,
              tool_name: str = None, success: bool = True,
              session_id: str = None, mode: str = DEFAULT_MODE,
              agent_role: str = None):

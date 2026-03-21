@@ -1774,5 +1774,37 @@
     "started_at": "2026-03-21T18:55:16.179948+00:00",
     "updated_at": "2026-03-21T18:55:36.183188+00:00",
     "resumed_count": 1
+  },
+  "f5eb2b7e": {
+    "chat_id": "f5eb2b7e",
+    "project_id": "f5eb2b7e",
+    "user_id": "admin",
+    "task": "Создай лендинг для блогера dimydiv. Доступы к серверу: хост 45.67.57.175, пользователь root, пароль 00!DS467PKs0. Деплой в /var/www/html/dimydiv/. ДИЗАЙН: тёмный фон #0a0a1a, неоновый синий #00d4ff, ф",
+    "status": "active",
+    "decisions": [],
+    "files_modified": [],
+    "commands_executed": [],
+    "errors": [],
+    "key_facts": [],
+    "summary": "",
+    "started_at": "2026-03-21T18:58:05.082169+00:00",
+    "updated_at": "2026-03-21T18:58:05.082193+00:00",
+    "resumed_count": 0
+  },
+  "af1a8951": {
+    "chat_id": "af1a8951",
+    "project_id": "af1a8951",
+    "user_id": "admin",
+    "task": "Создай лендинг для блогера dimydiv. Доступы к серверу: хост 45.67.57.175, пользователь root, пароль 00!DS467PKs0. Деплой в /var/www/html/dimydiv/. ДИЗАЙН: тёмный фон #0a0a1a, неоновый синий #00d4ff, ф",
+    "status": "active",
+    "decisions": [],
+    "files_modified": [],
+    "commands_executed": [],
+    "errors": [],
+    "key_facts": [],
+    "summary": "",
+    "started_at": "2026-03-21T19:02:01.162652+00:00",
+    "updated_at": "2026-03-21T19:02:01.162676+00:00",
+    "resumed_count": 0
   }
 }

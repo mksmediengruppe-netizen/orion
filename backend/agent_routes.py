@@ -611,7 +611,7 @@ def send_message(chat_id):
 
     # ── PATCH 4: Single model selection path via model_router ──
     # Model is selected ONLY by orion_mode via model_router, no keyword overrides
-    _TURBO_MODES = ("turbo_standard", "turbo_premium")
+    _TURBO_MODES = ("turbo_standard", "turbo_premium", "smart_turbo")
     try:
         from model_router import MODELS as _MR_MODELS
         _mode_to_model = {
