@@ -3,6 +3,7 @@ ORION Digital — System Prompts & Agent State.
 Extracted from agent_loop.py (TASK 7).
 """
 from typing import TypedDict, Optional, List, Annotated
+import operator
 from langgraph.graph.message import add_messages
 
 class AgentState(TypedDict):
