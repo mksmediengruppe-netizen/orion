@@ -183,12 +183,17 @@ def init_db():
             tool_calls_json  TEXT DEFAULT '{}',
             total_tool_calls INTEGER DEFAULT 0,
             error_count      INTEGER DEFAULT 0,
+            retry_count      INTEGER DEFAULT 0,
             errors_json      TEXT DEFAULT '[]',
+            verdict          TEXT DEFAULT '',
+            quality_score    REAL DEFAULT 0.0,
+            final_answer_len INTEGER DEFAULT 0,
             objective        TEXT DEFAULT '',
             status           TEXT DEFAULT 'running',
             final_verdict    TEXT DEFAULT '',
             final_score      REAL DEFAULT 0.0,
             quality_notes    TEXT DEFAULT '',
+            score            REAL DEFAULT 0.0,
             created_at       REAL,
             updated_at       REAL
         );
