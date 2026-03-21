@@ -28,7 +28,8 @@ const MODES = {
     'pro-basic':       { label: 'Pro',          tag: 'PRO',   desc: 'Claude Sonnet 4.6. Планирование, code review, качество.' },
     'pro_standard':    { label: 'Pro Standard', tag: 'PRO',   desc: 'Claude Sonnet 4.6. Планирование, code review, качество.' },
     'pro_premium':     { label: 'Pro Premium',  tag: 'PRO',   desc: 'Claude Sonnet 4.6. Премиум дизайн и копирайтинг.' },
-    'architect':       { label: 'Architect',    tag: 'OPUS',  desc: 'Claude Opus 4. Архитектура, глубокий анализ, аудит кода.' }
+    'architect':       { label: 'Architect',    tag: 'OPUS',  desc: 'Claude Opus 4. Архитектура, глубокий анализ, аудит кода.' },
+    'smart_turbo':     { label: 'Smart Turbo', tag: 'SMART', desc: 'Opus план + MiniMax код + MiMo деплой. Один вызов Opus, остальное дёшево.' }
 };
 
 /* ── MODE_INFO (УЛУЧ-3) ──────────────────────────────────── */
@@ -449,7 +450,7 @@ const UI = {
         // ПАТЧ W1-1: Восстановить режим из localStorage
         try {
             const savedMode = localStorage.getItem('orion_mode');
-            if (savedMode && ['turbo_basic', 'turbo-basic', 'turbo_standard', 'turbo_premium', 'pro_basic', 'pro-basic', 'pro_standard', 'pro_premium', 'architect'].includes(savedMode)) {
+            if (savedMode && ['turbo_basic', 'turbo-basic', 'turbo_standard', 'turbo_premium', 'pro_basic', 'pro-basic', 'pro_standard', 'pro_premium', 'architect', 'smart_turbo'].includes(savedMode)) {
                 state.mode = savedMode;
             }
         } catch(e) {}

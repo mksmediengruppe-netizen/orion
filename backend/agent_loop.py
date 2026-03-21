@@ -121,7 +121,7 @@ def _get_dual_brain_model(tool_name: str, orion_mode: str, base_model: str) -> s
     - Остальные → MiniMax M2.5 (по умолчанию думает)
     Для Pro/Architect — возвращает base_model без изменений.
     """
-    if orion_mode not in ("turbo_standard", "turbo_premium"):
+    if orion_mode not in ("turbo_standard", "turbo_premium", "smart_turbo"):
         return base_model
     if tool_name in HANDS_TOOLS:
         return TURBO_HANDS_MODEL

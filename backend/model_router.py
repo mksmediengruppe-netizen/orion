@@ -144,6 +144,23 @@ MODES = {
             "copywriter":       "sonnet",
             "code_reviewer":    "opus"
         }
+    },
+    "smart_turbo": {
+        "label": "Smart Turbo",
+        "description": "Opus планирует, MiniMax кодит, MiMo деплоит. Один вызов Opus $0.10-0.30, остальное дёшево.",
+        "max_cost_usd": 3.0,
+        "agents": {
+            "intent_clarifier": "minimax",   # MiniMax: понимает задачу
+            "orchestrator":     "opus",      # Opus: планирует ОДИН РАЗ
+            "designer":         "minimax",   # MiniMax: HTML/CSS/дизайн
+            "developer":        "minimax",   # MiniMax: пишет код
+            "devops":           "mimo",      # MiMo: SSH, сервер, nginx
+            "integrator":       "mimo",      # MiMo: API интеграции
+            "tester":           "mimo",      # MiMo: тестирование
+            "analyst":          "minimax",   # MiniMax: анализ
+            "copywriter":       "minimax",   # MiniMax: тексты
+            "code_reviewer":    None         # нет в Smart Turbo
+        }
     }
 }
 
